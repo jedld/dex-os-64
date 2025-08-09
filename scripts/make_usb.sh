@@ -18,5 +18,11 @@ sudo cp -f "${BUILD_DIR}/stage/boot/grub/grub.cfg" "${MOUNT_DIR}/boot/grub/"
 if [ -f "${BUILD_DIR}/stage/boot/kernel.elf" ]; then
   sudo cp -f "${BUILD_DIR}/stage/boot/kernel.elf" "${MOUNT_DIR}/boot/"
 fi
+if [ -f "${BUILD_DIR}/stage/boot/loader32.elf" ]; then
+  sudo cp -f "${BUILD_DIR}/stage/boot/loader32.elf" "${MOUNT_DIR}/boot/"
+fi
+if [ -f "${BUILD_DIR}/stage/boot/kernel64.bin" ]; then
+  sudo cp -f "${BUILD_DIR}/stage/boot/kernel64.bin" "${MOUNT_DIR}/boot/"
+fi
 
 echo "USB staged at ${MOUNT_DIR}"

@@ -12,3 +12,4 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 # UEFI apps for x86_64 and AArch64
 add_subdirectory(src/uefi)
 
+

@@ -1,3 +1,5 @@
+// kmain.c — kernel entry (current: Multiboot2 32-bit), serial logging, and early heap demo.
+// TODO: After long-mode trampoline is added, kmain64 will become the main 64-bit entry.
 #include <stdint.h>
 #include <stddef.h>
 #include "mm/kmalloc.h"
@@ -51,13 +53,32 @@ static void print_u64_hex(uint64_t v) {
     serial_write(buf);
 }
 
+static void print_u32_dec(uint32_t x) {
+    char tmp[16]; int i = 0;
+    if (x == 0) { serial_write("0"); return; }
+    while (x > 0 && i < (int)sizeof(tmp)) { tmp[i++] = '0' + (x % 10); x /= 10; }
+    for (int j = i - 1; j >= 0; --j) serial_write((char[]){tmp[j], 0});
+}
+
+static void print_human_bytes(uint64_t bytes) {
+    // Use shifts only; print approximate largest unit without 64-bit division.
+    uint32_t kib = (uint32_t)(bytes >> 10);
+    uint32_t mib = (uint32_t)(bytes >> 20);
+    uint32_t gib = (uint32_t)(bytes >> 30);
+    serial_write(" (~");
+    if (gib > 0) { print_u32_dec(gib); serial_write(" GiB"); }
+    else if (mib > 0) { print_u32_dec(mib); serial_write(" MiB"); }
+    else { print_u32_dec(kib); serial_write(" KiB"); }
+    serial_write(")");
+}
+
 void kmain(uint32_t mb_info) {
     serial_init();
     serial_write("Hello from Multiboot2 kernel!\n");
     // Initialize PMM from Multiboot2 info and print memory totals
     pmm_init((void*)(uintptr_t)mb_info, 0);
-    serial_write("Total physical: "); print_u64_hex(pmm_total_physical_bytes()); serial_write("\n");
-    serial_write("Usable (free init): "); print_u64_hex(pmm_total_bytes()); serial_write("\n");
+    serial_write("Total physical: "); print_u64_hex(pmm_total_physical_bytes()); print_human_bytes(pmm_total_physical_bytes()); serial_write("\n");
+    serial_write("Usable (free init): "); print_u64_hex(pmm_total_bytes()); print_human_bytes(pmm_total_bytes()); serial_write("\n");
     // Init a small static heap for early allocations (64 KiB)
     static uint8_t early_heap[64 * 1024] __attribute__((aligned(16)));
     kmalloc_init(early_heap, sizeof(early_heap));

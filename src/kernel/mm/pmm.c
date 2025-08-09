@@ -1,3 +1,6 @@
+// pmm.c — Physical Memory Manager skeleton
+// Parses Multiboot2 memory map to compute total and usable memory.
+// Next: build a frame bitmap allocator and subtract kernel/boot reserved areas.
 // Minimal Multiboot2 memory map parser to compute total and usable memory.
 #include "pmm.h"
 #include <stdint.h>

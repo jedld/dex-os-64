@@ -1,3 +1,5 @@
+// vmm.c — Virtual Memory Manager skeleton for x86_64
+// Will set up PML4-based paging and provide map/unmap/protect APIs once long mode is enabled.
 #include "vmm.h"
 
 // Placeholder VMM: stubs to be filled once long mode paging is active.

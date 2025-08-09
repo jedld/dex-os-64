@@ -1,3 +1,5 @@
+// kmalloc.c — Early kernel heap (first-fit) for pre-VMM allocations.
+// Replace with page-backed slab/arena allocator after PMM/VMM is online.
 #include "kmalloc.h"
 
 // Very simple first-fit allocator with headers, alignment to 16 bytes.

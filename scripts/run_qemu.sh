@@ -46,11 +46,17 @@ mkdir -p "${BUILD_DIR}"
 cp -f "${OVMF_VARS}" "${WRITABLE_VARS}"
 chmod u+rw "${WRITABLE_VARS}" || true
 
+ACCEL_ARGS="-accel tcg"
+if [[ "${KVM:-0}" == "1" ]]; then
+  ACCEL_ARGS="-enable-kvm"
+fi
+
 qemu-system-x86_64 \
-  -enable-kvm \
+  ${ACCEL_ARGS} \
   -m 256M \
   -drive if=pflash,format=raw,readonly=on,file="${OVMF_CODE}" \
   -drive if=pflash,format=raw,file="${WRITABLE_VARS}" \
   -cdrom "${ISO_PATH}" \
   -boot d \
-  -serial stdio
+  -serial stdio \
+  -no-reboot

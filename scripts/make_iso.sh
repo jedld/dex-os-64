@@ -13,6 +13,12 @@ cp -a "${BUILD_DIR}/stage/boot/grub/." "${ISO_DIR}/boot/grub/"
 if [ -f "${BUILD_DIR}/stage/boot/kernel.elf" ]; then
   cp -f "${BUILD_DIR}/stage/boot/kernel.elf" "${ISO_DIR}/boot/" 
 fi
+if [ -f "${BUILD_DIR}/stage/boot/loader32.elf" ]; then
+  cp -f "${BUILD_DIR}/stage/boot/loader32.elf" "${ISO_DIR}/boot/"
+fi
+if [ -f "${BUILD_DIR}/stage/boot/kernel64.bin" ]; then
+  cp -f "${BUILD_DIR}/stage/boot/kernel64.bin" "${ISO_DIR}/boot/"
+fi
 
 if command -v grub-mkrescue >/dev/null 2>&1; then
   mkdir -p "${BUILD_DIR}"
