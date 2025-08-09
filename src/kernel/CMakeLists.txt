@@ -6,6 +6,9 @@ enable_language(ASM)
 set(KERNEL_SOURCES
   arch/x86_64/boot/multiboot2.S
   kmain.c
+  mm/kmalloc.c
+  mm/pmm.c
+  mm/vmm.c
 )
 
 add_executable(kernel32 ${KERNEL_SOURCES})

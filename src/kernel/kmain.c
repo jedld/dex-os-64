@@ -1,4 +1,6 @@
 #include <stdint.h>
+#include <stddef.h>
+#include "mm/kmalloc.h"
 
 static inline void outb(uint16_t port, uint8_t val) {
     __asm__ volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
@@ -40,5 +42,13 @@ void kmain(uint32_t mb_info) {
     (void)mb_info;
     serial_init();
     serial_write("Hello from Multiboot2 kernel!\n");
+    // Init a small static heap for early allocations (64 KiB)
+    static uint8_t early_heap[64 * 1024] __attribute__((aligned(16)));
+    kmalloc_init(early_heap, sizeof(early_heap));
+    void* a = kmalloc(24);
+    void* b = kmalloc(1024);
+    void* c = kmalloc(4096);
+    serial_write("kmalloc test done\n");
+    (void)a; (void)b; (void)c;
     for (;;) { __asm__ volatile ("hlt"); }
 }
