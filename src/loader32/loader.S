@@ -30,12 +30,7 @@ _start:
     # Set up a temporary 32-bit stack
     mov $stack32_top, %esp
 
-    # Simple serial output - just print chars directly
-    mov $0x3F8, %dx     # COM1 base
-    mov $65, %al        # 'A' - entry
-    out %al, %dx
-    mov $66, %al        # 'B' - stack set
-    out %al, %dx
+    # Entry point reached
 
     # Setup a simple GDT with 64-bit code and data segments
     lgdt gdt_desc
@@ -47,8 +42,7 @@ _start:
     # Build identity-mapped 1 GiB with 2 MiB pages
     call build_paging
 
-    mov $67, %al        # 'C' - paging built
-    out %al, %dx
+    # Paging structures built
 
     # Enable PAE
     mov %cr4, %eax
@@ -215,11 +209,6 @@ long_mode_entry:
     mov (%rbx), %eax      # total size
     mov $8, %rcx          # offset
     
-    # Debug: print total size
-    mov $0x3F8, %dx
-    mov $84, %al        # 'T' - total size follows
-    out %al, %dx
-    
 find_tag:
     cmp %ecx, %eax
     jle no_module
@@ -227,11 +216,6 @@ find_tag:
     mov %rdx, %r15        # preserve tag base (rdx will be used for serial I/O)
     mov 0(%r15), %r8d     # type
     mov 4(%r15), %r9d     # size
-    
-    # Debug: print tag type
-    mov $0x3F8, %dx
-    mov $116, %al       # 't' - tag type follows  
-    out %al, %dx
     
     cmp $3, %r8d          # module tag
     je got_module
@@ -242,10 +226,7 @@ find_tag:
     jmp find_tag
 
 no_module:
-    # Debug: no module found
-    mov $0x3F8, %dx
-    mov $78, %al        # 'N' - no module
-    out %al, %dx
+    # No module found - halt
     call serial_init64
     lea msg_no_module(%rip), %rsi
     call serial_puts64
@@ -261,121 +242,7 @@ got_module:
     mov 8(%r15), %esi
     mov %rsi, %rax
 
-    # Debug: print module found
-    mov $0x3F8, %dx  
-    mov $77, %al        # 'M' - module found
-    out %al, %dx
-    
-    # Dump module tag header fields to serial: type, size, mod_start, mod_end
-    # Dump module tag fields using r15 as base
-    mov $0x3F8, %dx
-    mov $85, %al        # 'U' - type
-    out %al, %dx
-    mov 0(%r15), %eax
-    call dump_u32_hex
-    mov $0x3F8, %dx
-    mov $83, %al        # 'S' - size
-    out %al, %dx
-    mov 4(%r15), %eax
-    call dump_u32_hex
-    mov $0x3F8, %dx
-    mov $66, %al        # 'B' - begin (mod_start)
-    out %al, %dx
-    mov 8(%r15), %eax
-    call dump_u32_hex
-    mov $0x3F8, %dx
-    mov $69, %al        # 'E' - end (mod_end)
-    out %al, %dx
-    mov 12(%r15), %eax
-    call dump_u32_hex
-
-    # Print module address (prefix 'A'), then dump RSI (32-bit) and first 8 bytes at [RSI]
-    mov $0x3F8, %dx
-    mov $65, %al        # 'A' - module address follows
-    out %al, %dx
-
-    # Dump RSI low 32 bits as 8 hex digits
-    mov %esi, %eax
-    mov $8, %ecx
-0:
-    rol $4, %eax
-    mov %eax, %ebx
-    and $0xF, %ebx
-    add $'0', %bl
-    cmp $'9', %bl
-    jle 1f
-    add $7, %bl          # 'A'.. mapping
-1:  mov $0x3F8, %dx
-    mov %bl, %al
-    out %al, %dx
-    loop 0b
-
-    # Separator ':'
-    mov $0x3F8, %dx
-    mov $':', %al
-    out %al, %dx
-
-    # Dump first 8 bytes at [RSI]
-    mov $0, %r11d
-dump_loop:
-    cmp $8, %r11d
-    jge dump_done
-    mov (%rsi,%r11,1), %al
-    movzx %al, %ebx
-    # high nibble
-    mov %ebx, %eax
-    shr $4, %eax
-    and $0xF, %eax
-    add $'0', %al
-    cmp $'9', %al
-    jle 2f
-    add $7, %al
-2:  mov $0x3F8, %dx
-    out %al, %dx
-    # low nibble
-    mov %ebx, %eax
-    and $0xF, %eax
-    add $'0', %al
-    cmp $'9', %al
-    jle 3f
-    add $7, %al
-3:  mov $0x3F8, %dx
-    out %al, %dx
-    inc %r11d
-    jmp dump_loop
-dump_done:
-
-    # Quick sanity: check first two bytes at module start for 0x48 0x89 ('H' '‰')
-    mov (%rsi), %al
-    cmp $0x48, %al
-    jne 1f
-    mov $0x3F8, %dx
-    mov $72, %al        # 'H' - first byte matches 0x48
-    out %al, %dx
-1:
-    mov 1(%rsi), %al
-    cmp $0x89, %al
-    jne 2f
-    mov $0x3F8, %dx
-    mov $69, %al        # 'E' - second byte matches 0x89
-    out %al, %dx
-2:
-    
-    # Test before jump
-    mov $90, %al        # 'Z' - about to jump
-    out %al, %dx
-    
-    # For now, let's skip the jump and just print more debug
-    mov $33, %al        # '!' - alternative path
-    out %al, %dx
-    mov $79, %al        # 'O' - OK
-    out %al, %dx
-    mov $75, %al        # 'K'
-    out %al, %dx
-    
     # Jump to kernel64 (rsi = start address)
-    mov $74, %al        # 'J' - jumping now
-    out %al, %dx
     jmp *%rsi
 
     .align 16
@@ -527,25 +394,4 @@ serial_puts64:
     call serial_putc64
     jmp 2b
 3:  pop %rsi
-    ret
-
-# Helper: dump lower 32 bits in EAX as 8 hex digits to COM1
-dump_u32_hex:
-    push %rcx
-    push %rbx
-    mov $8, %ecx
-0:
-    rol $4, %eax
-    mov %eax, %ebx
-    and $0xF, %ebx
-    add $'0', %bl
-    cmp $'9', %bl
-    jle 1f
-    add $7, %bl
-1:  mov $0x3F8, %dx
-    mov %bl, %al
-    out %al, %dx
-    loop 0b
-    pop %rbx
-    pop %rcx
     ret

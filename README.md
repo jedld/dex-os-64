@@ -1,94 +1,148 @@
-# dex-os-64 — minimal "hello world" boot via UEFI and GRUB (USB)
+# dex-os-64 — x86_64 Operating System with Long Mode Support
 
-[![CI](https://github.com/jedld/dex-os-64/actions/workflows/ci.yml/badge.svg)](https://github.com/jedld/dex-os-64/actions/workflows/ci.yml)
+A minimal 64-bit operating system that boots via GRUB Multiboot2, enters x86_64 long mode, and provides basic system information display with interactive keyboard support.
 
-This repo scaffolds a tiny, modern 64-bit OS starter that prints "Hello, world" using a UEFI application, for both x86_64 and AArch64. It includes:
+## Features
 
-- A CMake-based build (toolchain-friendly),
-- UEFI apps for x86_64 and AArch64 that print to the firmware console,
-- A GRUB config that chainloads the UEFI application when booted under GRUB on UEFI systems,
-- Scripts to build, make an ISO, and stage a USB stick (FAT32) for UEFI boot.
+- **Multiboot2 Loader**: 32-bit loader that sets up long mode and jumps to 64-bit kernel
+- **x86_64 Long Mode**: Full 64-bit kernel execution with proper calling conventions
+- **VGA Text Console**: 80x25 color text output to VGA memory (0xB8000)
+- **CPU Information Display**: Shows CPU vendor, brand string, and feature flags via CPUID
+- **Memory Map**: Parses and displays Multiboot2 memory map with usable/reserved regions
+- **Interactive Keyboard Support**: Waits for keypress (PS/2 keyboard or serial console)
+- **Serial Console Support**: Dual input support for both PS/2 and serial console interaction
+- **UEFI Boot Support**: Boots on UEFI systems via GRUB
 
-Notes
-- GRUB path here uses chainloading of the UEFI app (common on UEFI systems). A legacy BIOS-only GRUB path is not provided in this first cut.
-- A bare-metal GRUB-multiboot kernel for x86_64 will be added in a follow-up step once the UEFI baseline is working on real hardware and QEMU.
+## Architecture
 
-## Build
+The system consists of two main components:
 
-Requirements (host Linux):
+1. **32-bit Loader** (`src/loader32/loader.S`):
+   - Multiboot2-compliant entry point
+   - Sets up GDT, paging (identity-mapped 1GB with 2MB pages)
+   - Enables long mode and jumps to 64-bit kernel
+
+2. **64-bit Kernel** (`src/kernel64/`):
+   - Entry point with proper stack alignment
+   - VGA console initialization and text output
+   - CPU information extraction via CPUID
+   - Memory map parsing from Multiboot2 info
+   - Keyboard input handling (PS/2 + serial)
+
+## Build Requirements
+
 - CMake 3.20+
-- GCC and binutils
-- For x86_64 UEFI: no extra toolchain (host x86_64 gcc works) + binutils objcopy with efi-app-x86_64 support
-- For AArch64 UEFI: aarch64-linux-gnu-gcc and aarch64-linux-gnu-objcopy
-- Optional: grub-mkrescue, xorriso, mtools (for ISO), OVMF for QEMU UEFI runs
+- Clang/LLVM toolchain
+- Linux development environment
+- GRUB tools (`grub-mkrescue`, `xorriso`) for ISO creation
+- QEMU with OVMF for testing
 
-Quick build:
+## Quick Start
 
+Build the system:
 ```bash
 ./scripts/build.sh
 ```
 
-Artifacts:
-- x86_64 UEFI app: `build/uefi/BOOTX64.EFI`
-- AArch64 UEFI app: `build/uefi/BOOTAA64.EFI`
-
-## Create UEFI USB (FAT32)
-
-Prepare a USB stick with a single FAT32 partition and mount it (example mount: `/mnt/usb`). Then stage files:
-
-```bash
-MOUNT=/mnt/usb ./scripts/make_usb.sh
-```
-
-This installs:
-- `EFI/BOOT/BOOTX64.EFI` (x86_64 UEFI app)
-- `EFI/BOOT/BOOTAA64.EFI` (AArch64 UEFI app)
-- `boot/grub/grub.cfg` (GRUB menu that chainloads the UEFI app on UEFI platforms)
-
-Boot the USB in UEFI mode and you should see a firmware text console with: `Hello, world from UEFI!`.
-
-## Make ISO (UEFI-friendly)
-
-If you have `grub-mkrescue` and `xorriso`:
-
+Create bootable ISO:
 ```bash
 ./scripts/make_iso.sh
 ```
 
-Produces `build/hello-os.iso`. You can boot it via QEMU UEFI or some real machines. On UEFI systems, GRUB can chainload the UEFI app.
-
-## Run in QEMU (UEFI)
-
-If you have OVMF:
-
+Run in QEMU:
 ```bash
 ./scripts/run_qemu.sh
 ```
 
-Adjust paths to your local OVMF binary if needed.
+The system will display:
+- CPU vendor and brand information
+- CPU feature flags (ECX/EDX from CPUID)
+- Complete memory map with usable and reserved regions
+- Interactive prompt: "Press any key to continue..."
 
-## Multiboot2 kernel (x86, 32-bit) with serial logging
+## What You'll See
 
-A tiny Multiboot2 kernel is included alongside the UEFI apps. It boots in 32-bit protected mode and writes to COM1 (0x3F8):
+When booted, the kernel displays system information:
 
-- Entry: Multiboot2-compliant header in `src/kernel/arch/x86_64/boot/multiboot2.S`
-- Linker script: `src/kernel/arch/x86_64/linker.ld`
-- Serial logging: `src/kernel/kmain.c` (prints "Hello from Multiboot2 kernel!")
+```
+dex-os-64 (x86_64)
 
-How to try:
-- Build (already part of `./scripts/build.sh`)
-- Boot the ISO in QEMU (or from USB) and choose “Multiboot2 kernel (x86, serial @ COM1)” in GRUB.
-- Output appears on QEMU's stdio window (serial redirected to stdio by `run_qemu.sh`).
+CPU vendor: GenuineIntel
+CPU brand:  Intel(R) Core(TM) i7-8700K CPU @ 3.70GHz
+Features ECX=0x... EDX=0x...
 
-Notes
-- The GRUB warning about "no console" is expected because we use serial output; the message still prints over serial.
-- This is a minimal starting point; next steps include entering long mode, paging, and a richer console.
+Memory map:
+  0x0000000000000000 + 0x000000000009FC00  [USABLE]
+  0x000000000009FC00 + 0x0000000000000400  [RESV]
+  0x00000000000E0000 + 0x0000000000020000  [RESV]
+  ...
+Total RAM: 0x... bytes
+Reserved:  0x... bytes
 
-## Next steps
+Done.
+Press any key to continue...
+```
 
-- Add a true GRUB Multiboot2 long-mode kernel for x86_64 (pure bare metal),
-- Minimal VGA/serial text console, paging, and a linker script for long-mode,
-- Early boot for AArch64 bare-metal (non-UEFI) on QEMU.
+The system waits for input from either:
+- PS/2 keyboard (physical keyboard)
+- Serial console (when using `-serial stdio` in QEMU)
+
+## File Structure
+
+```
+src/
+├── loader32/          # 32-bit Multiboot2 loader
+│   ├── loader.S       # Assembly loader with long mode setup
+│   └── CMakeLists.txt
+├── kernel64/          # 64-bit kernel
+│   ├── kmain64.c      # Main kernel with CPU info and memory map
+│   ├── start64.S      # 64-bit entry point
+│   ├── console.c/h    # VGA text console
+│   ├── cpuid.h        # CPU identification
+│   ├── io.h           # Port I/O operations
+│   ├── mb2.h          # Multiboot2 structures
+│   ├── serial.h       # Serial console support
+│   ├── linker.ld      # Kernel linker script
+│   └── CMakeLists.txt
+├── kernel/            # Legacy kernel (unused)
+└── uefi/              # UEFI applications
+```
+
+## Technical Details
+
+### Boot Process
+1. GRUB loads `loader32.elf` as Multiboot2 kernel
+2. GRUB loads `kernel64.bin` as a module
+3. Loader sets up minimal GDT and enables long mode
+4. Loader parses Multiboot2 tags to find kernel64 module
+5. Loader jumps to kernel64 entry point with Multiboot2 info in RDI
+6. Kernel64 displays system information and waits for user input
+
+### Memory Layout
+- **Loader**: 32-bit code, identity-mapped first 1GB
+- **Kernel**: 64-bit flat binary loaded as module
+- **Stack**: 64-bit stack with proper SysV ABI alignment
+- **VGA**: Text mode buffer at 0xB8000
+
+### Key Features Implemented
+- Multiboot2 specification compliance
+- Long mode transition with proper GDT setup
+- Identity paging (2MB pages for first 1GB)
+- SysV ABI calling conventions
+- VGA text console with cursor management
+- PS/2 keyboard polling
+- Serial I/O for debugging and input
+- Robust memory map parsing
+- CPU feature detection via CPUID
+
+## Development Notes
+
+This kernel demonstrates several important OS development concepts:
+- **Mode Transitions**: 32-bit to 64-bit long mode
+- **Memory Management**: Basic paging and memory map interpretation  
+- **I/O Operations**: Both memory-mapped (VGA) and port-based (keyboard/serial)
+- **Hardware Abstraction**: CPU identification and feature detection
+- **User Interaction**: Simple input handling for demonstration
 
 ## License
 

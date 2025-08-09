@@ -63,19 +63,10 @@ static void print_memory_map(uint64_t mb2_addr) {
 }
 
 void kmain64(void* mb_info) {
-    // Debug marker - reached kmain64
-    serial_putc('X');
-    
     console_init();
-    
-    // Debug marker - console initialized
-    serial_putc('Y');
 
     console_set_color(0x0F, 0x00); // white on black
     console_write("dex-os-64 (x86_64)\n\n");
-
-    // Debug marker - about to print CPU info
-    serial_putc('2');
 
     print_vendor();
     print_brand();
@@ -83,10 +74,7 @@ void kmain64(void* mb_info) {
     console_write("\n");
     print_memory_map((uint64_t)mb_info);
     console_write("\nDone.\n");
-    console_write("Press any key to continue (PS/2 or serial) ...\n");
-
-    // Debug marker - about to wait for keyboard
-    serial_putc('3');
+    console_write("Press any key to continue...\n");
 
     // Wait for a keypress from either PS/2 keyboard or serial console
     // Clear any pending PS/2 scancodes
@@ -98,7 +86,4 @@ void kmain64(void* mb_info) {
         int ch = serial_try_getc();
         if (ch >= 0) { break; }
     }
-
-    // Debug marker - key pressed, ending
-    serial_putc('4');
 }
