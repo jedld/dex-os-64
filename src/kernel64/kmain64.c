@@ -15,6 +15,9 @@
 #include "sched/sched.h"
 // Devices and shell
 #include "dev/device.h"
+#include "vfs/vfs.h"
+void exfat_register(void);
+int ramdisk_create(const char* name, uint64_t bytes);
 void display_console_register(void);
 void kb_ps2_register(void);
 void shell_main(void*);
@@ -145,92 +148,12 @@ void kmain64(void* mb_info) {
     // Register basic devices
     display_console_register();
     kb_ps2_register();
-menu_loop:
-    console_write("Menu:\n");
-    console_write("  [Q]uick memtest (16 MiB)\n");
-    console_write("  [R]ange memtest (enter start and size)\n");
-    console_write("  [L] Clear screen\n");
-    console_write("  [S]MP test (spawn N threads)\n");
-    console_write("  S[H]ell (interactive)\n");
-    console_write("  [C]ontinue\n");
-    console_write("Select: ");
-    for (;;) {
-        int ch = input_getc();
-        if (ch >= 'a' && ch <= 'z') ch -= 32; // upper
-        console_putc((char)ch);
-        console_write("\n");
-        if (ch == 'Q') {
-            uint64_t errs = memtest_quick();
-            console_write(errs ? "Result: FAIL\n" : "Result: PASS\n");
-            console_write("Done. Press any key...\n");
-            (void)input_getc();
-            print_banner_and_info(mb_addr);
-            goto menu_loop;
-        } else if (ch == 'R') {
-            char buf[64];
-            console_write("Start phys (hex, e.g., 1000000): ");
-            uint64_t n = input_readline(buf, sizeof(buf));
-            buf[n] = '\0';
-            // parse hex
-            uint64_t start = 0; const char* s = buf;
-            while (*s == ' ' || *s == '\t') ++s;
-            while (*s) {
-                char c = *s++;
-                uint8_t v;
-                if (c >= '0' && c <= '9') v = c - '0';
-                else if (c >= 'a' && c <= 'f') v = 10 + (c - 'a');
-                else if (c >= 'A' && c <= 'F') v = 10 + (c - 'A');
-                else break;
-                start = (start << 4) | v;
-            }
-            console_write("Length (hex bytes): ");
-            n = input_readline(buf, sizeof(buf)); buf[n] = '\0';
-            uint64_t len = 0; s = buf;
-            while (*s == ' ' || *s == '\t') ++s;
-            while (*s) {
-                char c = *s++;
-                uint8_t v;
-                if (c >= '0' && c <= '9') v = c - '0';
-                else if (c >= 'a' && c <= 'f') v = 10 + (c - 'a');
-                else if (c >= 'A' && c <= 'F') v = 10 + (c - 'A');
-                else break;
-                len = (len << 4) | v;
-            }
-            uint64_t errs = memtest_run(start, len, 1);
-            console_write(errs ? "Result: FAIL\n" : "Result: PASS\n");
-            console_write("Done. Press any key...\n");
-            (void)input_getc();
-            print_banner_and_info(mb_addr);
-            goto menu_loop;
-        } else if (ch == 'L') {
-            print_banner_and_info(mb_addr);
-            goto menu_loop;
-        } else if (ch == 'S') {
-            // SMP test: detect logical processors and spawn that many threads
-            uint32_t ncpu = cpuid_logical_processor_count();
-            if (ncpu < 2) ncpu = 2; if (ncpu > 8) ncpu = 8; // cap demo size
-            console_write("SMP logical CPUs: "); console_write_hex64(ncpu); console_write("\n");
-            // Create N worker threads that print their id repeatedly
-            for (uint32_t i=0;i<ncpu;i++){ smp_args[i].id=(int)i; }
-            for (uint32_t i=0;i<ncpu;i++) sched_create(smp_worker, &smp_args[i]);
-            sched_start();
-            for(;;){ __asm__ volatile ("hlt"); }
-        } else if (ch == 'H') {
-            console_write("Starting shell...\n");
-            sched_create(shell_main, NULL);
-            sched_start();
-            for(;;){ __asm__ volatile ("hlt"); }
-        } else if (ch == 'C' || ch == '\n' || ch == '\r' || ch == ' ') {
-            // Continue boot: demo cooperative scheduler
-            console_write("Starting scheduler demo...\n");
-            // Two demo threads printing dots and dashes
-            sched_create(workerA, NULL);
-            sched_create(workerB, NULL);
-            sched_start();
-            // If returns, halt
-            for(;;) { __asm__ volatile ("hlt"); }
-        } else {
-            console_write("Unknown option. Try again: ");
-        }
-    }
+    // Register filesystems
+    exfat_register();
+
+    // Start shell by default
+    console_write("Starting shell...\n");
+    sched_create(shell_main, NULL);
+    sched_start();
+    for(;;){ __asm__ volatile ("hlt"); }
 }

@@ -165,26 +165,31 @@ uint64_t input_readline(char* buf, uint64_t max_len) {
         }
         if (ev.type == KEY_BACKSPACE) {
             if (cur > 0) {
-                // remove char at cur-1
+                // Move cursor left one
+                console_putc('\b');
+                // Remove character before cursor (now at position cur-1)
                 for (uint64_t i = cur - 1; i + 1 < len; ++i) buf[i] = buf[i+1];
-                // move left, overwrite with tail and space, move back
-                console_putc('\b');
-                len--; cur--;
-                reprint_from(buf, cur, len);
+                cur--; len--;
+                // Reprint tail starting at new cur
+                for (uint64_t k = cur; k < len; ++k) console_putc(buf[k]);
+                // Clear last leftover character on screen
                 console_putc(' ');
-                console_putc('\b');
-                for (uint64_t k = cur; k < len; ++k) console_putc('\b');
+                // Move cursor back to cur position
+                for (uint64_t k = cur; k <= len; ++k) console_putc('\b');
             }
             continue;
         }
         if (ev.type == KEY_DELETE) {
             if (cur < len) {
+                // Remove character at cursor
                 for (uint64_t i = cur; i + 1 < len; ++i) buf[i] = buf[i+1];
                 len--;
-                reprint_from(buf, cur, len);
+                // Reprint tail starting at cur
+                for (uint64_t k = cur; k < len; ++k) console_putc(buf[k]);
+                // Clear last leftover character on screen
                 console_putc(' ');
-                console_putc('\b');
-                for (uint64_t k = cur; k < len; ++k) console_putc('\b');
+                // Move cursor back to original cur position
+                for (uint64_t k = cur; k <= len; ++k) console_putc('\b');
             }
             continue;
         }

@@ -51,6 +51,10 @@ void console_putc(char c) {
         s_col = 0;
         move_cursor();
         return;
+    } else if (c == '\b') {
+        // Backspace: move cursor left by one (do not erase character)
+        if (s_col > 0) { s_col--; move_cursor(); }
+        return;
     }
     VGA_MEM[s_row * VGA_COLS + s_col] = vga_entry(c, s_color);
     if (++s_col >= VGA_COLS) { s_col = 0; if (++s_row >= VGA_ROWS) s_row = 0; }

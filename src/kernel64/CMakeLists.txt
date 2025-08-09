@@ -9,9 +9,14 @@ set(SRCS
   console.c
   input.c
   memtest.c
+  lib/mem.c
   dev/device.c
   dev/display_console.c
   dev/keyboard_ps2.c
+  block/block.c
+  block/ramdisk.c
+  vfs/vfs.c
+  fs/exfat.c
   shell.c
   ../kernel/mm/pmm.c
   ../kernel/mm/vmm.c
