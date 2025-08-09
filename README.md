@@ -1,5 +1,7 @@
 # dex-os-64 — minimal "hello world" boot via UEFI and GRUB (USB)
 
+[![CI](https://github.com/jedld/dex-os-64/actions/workflows/ci.yml/badge.svg)](https://github.com/jedld/dex-os-64/actions/workflows/ci.yml)
+
 This repo scaffolds a tiny, modern 64-bit OS starter that prints "Hello, world" using a UEFI application, for both x86_64 and AArch64. It includes:
 
 - A CMake-based build (toolchain-friendly),
@@ -64,6 +66,23 @@ If you have OVMF:
 ```
 
 Adjust paths to your local OVMF binary if needed.
+
+## Multiboot2 kernel (x86, 32-bit) with serial logging
+
+A tiny Multiboot2 kernel is included alongside the UEFI apps. It boots in 32-bit protected mode and writes to COM1 (0x3F8):
+
+- Entry: Multiboot2-compliant header in `src/kernel/arch/x86_64/boot/multiboot2.S`
+- Linker script: `src/kernel/arch/x86_64/linker.ld`
+- Serial logging: `src/kernel/kmain.c` (prints "Hello from Multiboot2 kernel!")
+
+How to try:
+- Build (already part of `./scripts/build.sh`)
+- Boot the ISO in QEMU (or from USB) and choose “Multiboot2 kernel (x86, serial @ COM1)” in GRUB.
+- Output appears on QEMU's stdio window (serial redirected to stdio by `run_qemu.sh`).
+
+Notes
+- The GRUB warning about "no console" is expected because we use serial output; the message still prints over serial.
+- This is a minimal starting point; next steps include entering long mode, paging, and a richer console.
 
 ## Next steps
 

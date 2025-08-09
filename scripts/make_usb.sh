@@ -15,5 +15,8 @@ sudo mkdir -p "${MOUNT_DIR}/EFI/BOOT" "${MOUNT_DIR}/boot/grub"
 sudo cp -f "${BUILD_DIR}/stage/boot/grub/grub.cfg" "${MOUNT_DIR}/boot/grub/"
 [ -f "${BUILD_DIR}/stage/EFI/BOOT/BOOTX64.EFI" ] && sudo cp -f "${BUILD_DIR}/stage/EFI/BOOT/BOOTX64.EFI" "${MOUNT_DIR}/EFI/BOOT/"
 [ -f "${BUILD_DIR}/stage/EFI/BOOT/BOOTAA64.EFI" ] && sudo cp -f "${BUILD_DIR}/stage/EFI/BOOT/BOOTAA64.EFI" "${MOUNT_DIR}/EFI/BOOT/"
+if [ -f "${BUILD_DIR}/stage/boot/kernel.elf" ]; then
+  sudo cp -f "${BUILD_DIR}/stage/boot/kernel.elf" "${MOUNT_DIR}/boot/"
+fi
 
 echo "USB staged at ${MOUNT_DIR}"

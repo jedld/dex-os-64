@@ -10,6 +10,9 @@ rm -rf "${ISO_DIR}"
 mkdir -p "${ISO_DIR}/EFI/BOOT" "${ISO_DIR}/boot/grub"
 cp -a "${BUILD_DIR}/stage/EFI/BOOT/." "${ISO_DIR}/EFI/BOOT/" || true
 cp -a "${BUILD_DIR}/stage/boot/grub/." "${ISO_DIR}/boot/grub/"
+if [ -f "${BUILD_DIR}/stage/boot/kernel.elf" ]; then
+  cp -f "${BUILD_DIR}/stage/boot/kernel.elf" "${ISO_DIR}/boot/" 
+fi
 
 if command -v grub-mkrescue >/dev/null 2>&1; then
   mkdir -p "${BUILD_DIR}"
