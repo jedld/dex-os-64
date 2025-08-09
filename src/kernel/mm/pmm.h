@@ -10,6 +10,7 @@
 void pmm_init(void* mb2_info_or_uefi_map, int from_uefi);
 uint64_t pmm_total_bytes(void);
 uint64_t pmm_free_bytes(void);
+uint64_t pmm_total_physical_bytes(void);
 
 // Allocate 'count' contiguous frames; returns physical address or 0 on failure
 uint64_t pmm_alloc_frames(size_t count);
