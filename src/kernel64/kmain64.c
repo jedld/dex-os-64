@@ -117,6 +117,14 @@ static void print_banner_and_info(uint64_t mb_addr) {
 static void workerA(void* _) { (void)_; for (int i=0;i<50;++i){ console_putc('.'); sched_yield(); } }
 static void workerB(void* _) { (void)_; for (int i=0;i<50;++i){ console_putc('-'); sched_yield(); } }
 
+// SMP test worker and args
+typedef struct { int id; } smp_arg_t;
+static smp_arg_t smp_args[8];
+static void smp_worker(void* p) {
+    int id = ((smp_arg_t*)p)->id;
+    for (int k = 0; k < 40; ++k) { console_putc('0' + (id % 10)); sched_yield(); }
+}
+
 void kmain64(void* mb_info) {
     console_init();
     uint64_t mb_addr = (uint64_t)mb_info;
@@ -134,6 +142,7 @@ menu_loop:
     console_write("  [Q]uick memtest (16 MiB)\n");
     console_write("  [R]ange memtest (enter start and size)\n");
     console_write("  [L] Clear screen\n");
+    console_write("  [S]MP test (spawn N threads)\n");
     console_write("  [C]ontinue\n");
     console_write("Select: ");
     for (;;) {
@@ -187,6 +196,16 @@ menu_loop:
         } else if (ch == 'L') {
             print_banner_and_info(mb_addr);
             goto menu_loop;
+        } else if (ch == 'S') {
+            // SMP test: detect logical processors and spawn that many threads
+            uint32_t ncpu = cpuid_logical_processor_count();
+            if (ncpu < 2) ncpu = 2; if (ncpu > 8) ncpu = 8; // cap demo size
+            console_write("SMP logical CPUs: "); console_write_hex64(ncpu); console_write("\n");
+            // Create N worker threads that print their id repeatedly
+            for (uint32_t i=0;i<ncpu;i++){ smp_args[i].id=(int)i; }
+            for (uint32_t i=0;i<ncpu;i++) sched_create(smp_worker, &smp_args[i]);
+            sched_start();
+            for(;;){ __asm__ volatile ("hlt"); }
         } else if (ch == 'C' || ch == '\n' || ch == '\r' || ch == ' ') {
             // Continue boot: demo cooperative scheduler
             console_write("Starting scheduler demo...\n");

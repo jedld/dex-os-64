@@ -53,6 +53,7 @@ fi
 
 qemu-system-x86_64 \
   ${ACCEL_ARGS} \
+  -smp ${SMP:-4} \
   -m 256M \
   -drive if=pflash,format=raw,readonly=on,file="${OVMF_CODE}" \
   -drive if=pflash,format=raw,file="${WRITABLE_VARS}" \
