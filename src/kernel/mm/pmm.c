@@ -28,11 +28,15 @@ static uint8_t* g_bitmap = NULL;        // stored in .bss; allocated at compile 
 #endif
 static uint8_t g_bitmap_storage[PMM_MAX_FRAMES/8];
 
-// Multiboot2 minimal structures to parse mmap
+// Multiboot2 minimal structures to parse memory info
 struct mb2_tag { uint32_t type, size; };
 struct mb2_tag_mmap { uint32_t type, size, entry_size, entry_version; };
 struct mb2_mmap_entry { uint64_t addr, len; uint32_t type, zero; };
-enum { MB2_TAG_TYPE_MMAP = 6 };
+struct mb2_tag_basic_meminfo { uint32_t type, size; uint32_t mem_lower, mem_upper; };
+struct mb2_tag_efi_mmap { uint32_t type, size; uint32_t desc_size, desc_version; };
+// Minimal subset of EFI memory descriptor (UEFI)
+struct efi_mem_desc { uint32_t Type, Pad; uint64_t PhysicalStart, VirtualStart, NumberOfPages, Attribute; };
+enum { MB2_TAG_TYPE_MMAP = 6, MB2_TAG_TYPE_BASIC_MEMINFO = 4, MB2_TAG_TYPE_EFI_MMAP = 12 };
 
 static inline uint64_t align_down(uint64_t x, uint64_t a) { return x & ~(a-1); }
 static inline uint64_t align_up(uint64_t x, uint64_t a) { return (x + (a-1)) & ~(a-1); }
@@ -46,10 +50,29 @@ static void parse_mb2(void* info) {
     uint8_t* base = (uint8_t*)info;
     uint32_t total_size = *(uint32_t*)base;
     uint32_t off = 8; // skip header
+    int saw_mmap = 0;
+    int saw_efi = 0;
     while (off + sizeof(struct mb2_tag) <= total_size) {
         struct mb2_tag* tag = (struct mb2_tag*)(base + off);
         if (tag->type == 0 || tag->size < sizeof(struct mb2_tag)) break;
-        if (tag->type == MB2_TAG_TYPE_MMAP) {
+        if (tag->type == MB2_TAG_TYPE_EFI_MMAP) {
+            // Prefer EFI map when available
+            struct mb2_tag_efi_mmap* em = (struct mb2_tag_efi_mmap*)tag;
+            uint32_t esize = em->desc_size;
+            uint32_t payload = em->size - sizeof(struct mb2_tag_efi_mmap);
+            uint8_t* ep = (uint8_t*)em + sizeof(struct mb2_tag_efi_mmap);
+            for (uint32_t o = 0; o + esize <= payload; o += esize) {
+                struct efi_mem_desc* d = (struct efi_mem_desc*)(ep + o);
+                uint64_t bytes = d->NumberOfPages * 4096ULL;
+                g_total_phys += bytes;
+                if (d->Type == 7 /*EfiConventionalMemory*/) {
+                    uint64_t s = align_up(d->PhysicalStart, PMM_FRAME_SIZE);
+                    uint64_t end = align_down(d->PhysicalStart + bytes, PMM_FRAME_SIZE);
+                    if (end > s) { add_region(s, end - s); g_total_usable += (end - s); }
+                }
+            }
+            saw_efi = 1;
+        } else if (tag->type == MB2_TAG_TYPE_MMAP) {
             struct mb2_tag_mmap* mm = (struct mb2_tag_mmap*)tag;
             uint32_t esize = mm->entry_size;
             uint32_t entries_size = mm->size - sizeof(struct mb2_tag_mmap);
@@ -64,6 +87,21 @@ static void parse_mb2(void* info) {
                         add_region(s, end - s);
                         g_total_usable += (end - s);
                     }
+                }
+            }
+            saw_mmap = 1;
+        } else if (tag->type == MB2_TAG_TYPE_BASIC_MEMINFO) {
+            // Use as a fallback if nothing else parsed
+            struct mb2_tag_basic_meminfo* bi = (struct mb2_tag_basic_meminfo*)tag;
+            if (!saw_efi && !saw_mmap) {
+                uint64_t lower = (uint64_t)bi->mem_lower * 1024ULL;
+                uint64_t upper = (uint64_t)bi->mem_upper * 1024ULL;
+                g_total_phys = lower + upper;
+                // Conservatively treat only upper memory (above 1MiB) as usable
+                if (upper > 0) {
+                    uint64_t base1 = 0x100000ULL;
+                    add_region(base1, upper);
+                    g_total_usable = upper;
                 }
             }
         }

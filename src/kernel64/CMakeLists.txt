@@ -9,6 +9,10 @@ set(SRCS
   console.c
   input.c
   memtest.c
+  dev/device.c
+  dev/display_console.c
+  dev/keyboard_ps2.c
+  shell.c
   ../kernel/mm/pmm.c
   ../kernel/mm/vmm.c
   ../kernel/mm/kmalloc.c

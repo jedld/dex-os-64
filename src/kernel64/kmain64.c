@@ -13,6 +13,11 @@
 #include "../kernel/mm/vmm.h"
 #include "../kernel/mm/kmalloc.h"
 #include "sched/sched.h"
+// Devices and shell
+#include "dev/device.h"
+void display_console_register(void);
+void kb_ps2_register(void);
+void shell_main(void*);
 
 static void print_vendor(void) {
     cpuid_regs r0 = cpuid(0, 0);
@@ -137,12 +142,16 @@ void kmain64(void* mb_info) {
     static uint8_t early_heap[256 * 1024] __attribute__((aligned(16)));
     kmalloc_init(early_heap, sizeof(early_heap));
     console_write("PMM/VMM initialized. Free: "); console_write_hex64(pmm_free_bytes()); console_write(" bytes\n\n");
+    // Register basic devices
+    display_console_register();
+    kb_ps2_register();
 menu_loop:
     console_write("Menu:\n");
     console_write("  [Q]uick memtest (16 MiB)\n");
     console_write("  [R]ange memtest (enter start and size)\n");
     console_write("  [L] Clear screen\n");
     console_write("  [S]MP test (spawn N threads)\n");
+    console_write("  S[H]ell (interactive)\n");
     console_write("  [C]ontinue\n");
     console_write("Select: ");
     for (;;) {
@@ -204,6 +213,11 @@ menu_loop:
             // Create N worker threads that print their id repeatedly
             for (uint32_t i=0;i<ncpu;i++){ smp_args[i].id=(int)i; }
             for (uint32_t i=0;i<ncpu;i++) sched_create(smp_worker, &smp_args[i]);
+            sched_start();
+            for(;;){ __asm__ volatile ("hlt"); }
+        } else if (ch == 'H') {
+            console_write("Starting shell...\n");
+            sched_create(shell_main, NULL);
             sched_start();
             for(;;){ __asm__ volatile ("hlt"); }
         } else if (ch == 'C' || ch == '\n' || ch == '\r' || ch == ' ') {

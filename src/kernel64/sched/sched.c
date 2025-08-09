@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "../console.h"
+#include "sched.h"
 
 typedef struct thread {
 	struct thread* next;
@@ -9,6 +10,7 @@ typedef struct thread {
 	void (*entry)(void*);
 	void* arg;
 	int state;         // 0=ready,1=running,2=done
+	int id;            // stable id
 } thread_t;
 
 static thread_t* g_runq = NULL;
@@ -53,7 +55,7 @@ static void thread_trampoline(void) {
 int sched_create(void (*entry)(void*), void* arg) {
 	if (g_thread_count >= MAX_THREADS) return -1;
 	thread_t* t = &g_threads[g_thread_count];
-	t->entry = entry; t->arg = arg; t->state = 0; t->next = NULL;
+	t->entry = entry; t->arg = arg; t->state = 0; t->next = NULL; t->id = g_thread_count;
 	// Set up stack: push return RIP = thread_trampoline end (never returns)
 	uint8_t* stack_top = g_stacks[g_thread_count] + STACK_SIZE;
 	stack_top = (uint8_t*)((uintptr_t)stack_top & ~0xFULL);
@@ -95,4 +97,19 @@ __attribute__((naked)) void sched_context_switch(uint64_t* old_rsp, uint64_t new
 		"mov %rsi, %rsp\n\t"    // rsp = new_rsp
 		"ret\n\t"
 	);
+}
+
+int sched_enumerate(sched_thread_info_t* out, int max) {
+	if (!out || max <= 0) return 0;
+	int n = (g_thread_count < max) ? g_thread_count : max;
+	for (int i = 0; i < n; ++i) {
+		out[i].id = g_threads[i].id;
+		out[i].state = g_threads[i].state;
+		out[i].rsp = g_threads[i].rsp;
+	}
+	return n;
+}
+
+int sched_current_id(void) {
+	return g_current ? g_current->id : -1;
 }
