@@ -7,6 +7,8 @@ set(SRCS
   start64.S
   kmain64.c
   console.c
+  input.c
+  memtest.c
 )
 
 add_executable(kernel64_elf ${SRCS})

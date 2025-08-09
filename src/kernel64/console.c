@@ -3,7 +3,10 @@
 #include <stddef.h>
 
 #define VGA_MEM ((volatile uint16_t*)0xB8000)
-#define VGA_COLS 80
+#ifndef CONSOLE_COLS
+#define CONSOLE_COLS 80
+#endif
+#define VGA_COLS CONSOLE_COLS
 #define VGA_ROWS 25
 
 static uint8_t s_color = 0x0F; // white on black
@@ -41,6 +44,11 @@ void console_putc(char c) {
     if (c == '\n') {
         s_col = 0;
         if (++s_row >= VGA_ROWS) s_row = 0;
+        move_cursor();
+        return;
+    } else if (c == '\r') {
+        // Carriage return: move to start of current line
+        s_col = 0;
         move_cursor();
         return;
     }

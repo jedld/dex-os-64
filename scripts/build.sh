@@ -7,7 +7,7 @@ BUILD_DIR="${ROOT_DIR}/build"
 
 if [[ "${CLEAN:-0}" == "1" ]]; then
   echo "Cleaning build directories..."
-  rm -rf "${BUILD_DIR}/x86_64" "${BUILD_DIR}/aarch64"
+  rm -rf "${BUILD_DIR}/x86_64" "${BUILD_DIR}/aarch64" "${BUILD_DIR}/kernel64" "${BUILD_DIR}/loader32" "${BUILD_DIR}/iso_root" "${BUILD_DIR}/stage"
 fi
 
 if ! command -v cmake >/dev/null 2>&1; then
