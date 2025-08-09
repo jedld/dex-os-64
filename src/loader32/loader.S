@@ -73,7 +73,7 @@ _start:
     # Far jump to 64-bit mode entry stub
     ljmp $0x08, $long_mode_entry
 
-# Build PML4->PDPT->PD with 2MiB pages covering 1 GiB
+# Build PML4->PDPT->PDs with 2MiB pages covering 4 GiB
 build_paging:
     # Zero tables (write full 8 bytes per entry)
     xor %eax, %eax
@@ -92,11 +92,32 @@ build_paging:
     loop 2b
 
     mov $512, %ecx
-    mov $pd, %edi
+    mov $pd0, %edi
 3:  mov %eax, (%edi)
     mov %eax, 4(%edi)
     add $8, %edi
     loop 3b
+
+    mov $512, %ecx
+    mov $pd1, %edi
+4:  mov %eax, (%edi)
+    mov %eax, 4(%edi)
+    add $8, %edi
+    loop 4b
+
+    mov $512, %ecx
+    mov $pd2, %edi
+5:  mov %eax, (%edi)
+    mov %eax, 4(%edi)
+    add $8, %edi
+    loop 5b
+
+    mov $512, %ecx
+    mov $pd3, %edi
+6:  mov %eax, (%edi)
+    mov %eax, 4(%edi)
+    add $8, %edi
+    loop 6b
 
     # Setup entries
     # PML4[0] -> PDPT | P | RW
@@ -106,27 +127,69 @@ build_paging:
     mov $0, %eax
     mov %eax, 4+pml4
 
-    # PDPT[0] -> PD | P | RW
-    mov $pd, %eax
+    # PDPT[0..3] -> PD0..PD3 | P | RW (each maps 1 GiB)
+    mov $pd0, %eax
     or $0x3, %eax
     mov %eax, (pdpt)
     mov $0, %eax
     mov %eax, 4+pdpt
 
-    # PD entries: 512 * 2MiB = 1GiB
+    mov $pd1, %eax
+    or $0x3, %eax
+    mov %eax, 8+pdpt
+    mov $0, %eax
+    mov %eax, 12+pdpt
+
+    mov $pd2, %eax
+    or $0x3, %eax
+    mov %eax, 16+pdpt
+    mov $0, %eax
+    mov %eax, 20+pdpt
+
+    mov $pd3, %eax
+    or $0x3, %eax
+    mov %eax, 24+pdpt
+    mov $0, %eax
+    mov %eax, 28+pdpt
+
+    # Fill PDs: 4 * 512 * 2MiB = 4GiB
     mov $0, %eax            # base phys
-    mov $0, %ecx
-4:  mov %eax, %edx
+    mov $0, %ecx            # entry index within PD
+    mov $0, %ebx            # PD index 0..3
+
+fill_pd_loop:
+    mov %eax, %edx
     or $0x83, %edx          # P|RW|PS (bit 7)
-    mov %ecx, %edi
-    lea pd(,%edi,8), %edi
+    # choose PD base by %ebx
+    cmp $0, %ebx
+    jne 7f
+    lea pd0(,%ecx,8), %edi
+    jmp 11f
+7:  cmp $1, %ebx
+    jne 8f
+    lea pd1(,%ecx,8), %edi
+    jmp 11f
+8:  cmp $2, %ebx
+    jne 9f
+    lea pd2(,%ecx,8), %edi
+    jmp 11f
+9:
+    lea pd3(,%ecx,8), %edi
+11:
     mov %edx, (%edi)
     mov $0, %edx
     mov %edx, 4(%edi)
+
     add $0x200000, %eax     # next 2MiB
     inc %ecx
     cmp $512, %ecx
-    jne 4b
+    jl 12f
+    # next PD
+    mov $0, %ecx
+    inc %ebx
+12:
+    cmp $4, %ebx
+    jl fill_pd_loop
     ret
 
     .align 16
@@ -161,8 +224,9 @@ find_tag:
     cmp %ecx, %eax
     jle no_module
     lea (%rbx,%rcx), %rdx
-    mov 0(%rdx), %r8d     # type
-    mov 4(%rdx), %r9d     # size
+    mov %rdx, %r15        # preserve tag base (rdx will be used for serial I/O)
+    mov 0(%r15), %r8d     # type
+    mov 4(%r15), %r9d     # size
     
     # Debug: print tag type
     mov $0x3F8, %dx
@@ -189,19 +253,113 @@ no_module:
     jmp no_module
 
 got_module:
+    # r15 holds the found tag base. Do not use rdx for memory reads (dx is used by 'out').
+    # rsi = module start (at offset 8 in tag, not 16!)
+    # IMPORTANT: mod_start is a 32-bit field; load 32 bits into ESI
+    # so RSI gets zero-extended, instead of reading 64 bits which would
+    # incorrectly combine mod_start and mod_end.
+    mov 8(%r15), %esi
+    mov %rsi, %rax
+
     # Debug: print module found
     mov $0x3F8, %dx  
     mov $77, %al        # 'M' - module found
     out %al, %dx
     
-    # rsi = module start (at offset 8 in tag, not 16!)
-    mov 8(%rdx), %rsi
-    mov %rsi, %rax
-    
-    # Print module address (simplified - just print 'A' if we have one)
+    # Dump module tag header fields to serial: type, size, mod_start, mod_end
+    # Dump module tag fields using r15 as base
+    mov $0x3F8, %dx
+    mov $85, %al        # 'U' - type
+    out %al, %dx
+    mov 0(%r15), %eax
+    call dump_u32_hex
+    mov $0x3F8, %dx
+    mov $83, %al        # 'S' - size
+    out %al, %dx
+    mov 4(%r15), %eax
+    call dump_u32_hex
+    mov $0x3F8, %dx
+    mov $66, %al        # 'B' - begin (mod_start)
+    out %al, %dx
+    mov 8(%r15), %eax
+    call dump_u32_hex
+    mov $0x3F8, %dx
+    mov $69, %al        # 'E' - end (mod_end)
+    out %al, %dx
+    mov 12(%r15), %eax
+    call dump_u32_hex
+
+    # Print module address (prefix 'A'), then dump RSI (32-bit) and first 8 bytes at [RSI]
     mov $0x3F8, %dx
     mov $65, %al        # 'A' - module address follows
     out %al, %dx
+
+    # Dump RSI low 32 bits as 8 hex digits
+    mov %esi, %eax
+    mov $8, %ecx
+0:
+    rol $4, %eax
+    mov %eax, %ebx
+    and $0xF, %ebx
+    add $'0', %bl
+    cmp $'9', %bl
+    jle 1f
+    add $7, %bl          # 'A'.. mapping
+1:  mov $0x3F8, %dx
+    mov %bl, %al
+    out %al, %dx
+    loop 0b
+
+    # Separator ':'
+    mov $0x3F8, %dx
+    mov $':', %al
+    out %al, %dx
+
+    # Dump first 8 bytes at [RSI]
+    mov $0, %r11d
+dump_loop:
+    cmp $8, %r11d
+    jge dump_done
+    mov (%rsi,%r11,1), %al
+    movzx %al, %ebx
+    # high nibble
+    mov %ebx, %eax
+    shr $4, %eax
+    and $0xF, %eax
+    add $'0', %al
+    cmp $'9', %al
+    jle 2f
+    add $7, %al
+2:  mov $0x3F8, %dx
+    out %al, %dx
+    # low nibble
+    mov %ebx, %eax
+    and $0xF, %eax
+    add $'0', %al
+    cmp $'9', %al
+    jle 3f
+    add $7, %al
+3:  mov $0x3F8, %dx
+    out %al, %dx
+    inc %r11d
+    jmp dump_loop
+dump_done:
+
+    # Quick sanity: check first two bytes at module start for 0x48 0x89 ('H' '‰')
+    mov (%rsi), %al
+    cmp $0x48, %al
+    jne 1f
+    mov $0x3F8, %dx
+    mov $72, %al        # 'H' - first byte matches 0x48
+    out %al, %dx
+1:
+    mov 1(%rsi), %al
+    cmp $0x89, %al
+    jne 2f
+    mov $0x3F8, %dx
+    mov $69, %al        # 'E' - second byte matches 0x89
+    out %al, %dx
+2:
     
     # Test before jump
     mov $90, %al        # 'Z' - about to jump
@@ -216,6 +374,8 @@ got_module:
     out %al, %dx
     
     # Jump to kernel64 (rsi = start address)
+    mov $74, %al        # 'J' - jumping now
+    out %al, %dx
     jmp *%rsi
 
     .align 16
@@ -239,8 +399,14 @@ got_module:
     .space 4096
  pdpt:
     .space 4096
- pd:
+ pd0:
     .space 4096
+ pd1:
+     .space 4096
+ pd2:
+     .space 4096
+ pd3:
+     .space 4096
 
      .align 16
  stack32:
@@ -361,4 +527,25 @@ serial_puts64:
     call serial_putc64
     jmp 2b
 3:  pop %rsi
+    ret
+
+# Helper: dump lower 32 bits in EAX as 8 hex digits to COM1
+dump_u32_hex:
+    push %rcx
+    push %rbx
+    mov $8, %ecx
+0:
+    rol $4, %eax
+    mov %eax, %ebx
+    and $0xF, %ebx
+    add $'0', %bl
+    cmp $'9', %bl
+    jle 1f
+    add $7, %bl
+1:  mov $0x3F8, %dx
+    mov %bl, %al
+    out %al, %dx
+    loop 0b
+    pop %rbx
+    pop %rcx
     ret

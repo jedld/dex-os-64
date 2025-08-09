@@ -1,17 +1,44 @@
-.text
+.section .text.start, "ax"
 .code64
 .globl kstart64
+.extern kmain64
+
 kstart64:
-    # Use 32-bit mov to dx to avoid 16-bit prefix
-    mov $0x3F8, %edx
-    mov $75, %eax        # 'K' - kernel64 entry marker
+    # On entry from loader: RDI = mb2 info pointer, stack valid
+    # Ensure SysV ABI stack alignment: RSP % 16 == 8 prior to 'call'
+    mov %rsp, %rax
+    and $~0xF, %rsp          # align to 16 bytes
+    sub $8, %rsp             # make RSP % 16 == 8 (for call)
+    # Serial debug: print 'K' to COM1 to confirm entry (wait for THR empty)
+    mov $0x3FD, %dx            # LSR
+.Lwait_k:
+    in %dx, %al
+    test $0x20, %al            # THRE bit
+    jz .Lwait_k
+    mov $0x3F8, %dx            # THR
+    mov $75, %al               # 'K'
     out %al, %dx
-    mov $54, %eax        # '6'
+    # Debug marker before call 'W'
+    mov $0x3FD, %dx
+.Lwait_w:
+    in %dx, %al
+    test $0x20, %al
+    jz .Lwait_w
+    mov $0x3F8, %dx
+    mov $87, %al               # 'W'
     out %al, %dx
-    mov $52, %eax        # '4'
+    # RDI already has the mb2 info pointer
+    call kmain64
+    # Debug marker after call (if we get here) 'Z'
+    mov $0x3FD, %dx
+.Lwait_z:
+    in %dx, %al
+    test $0x20, %al
+    jz .Lwait_z
+    mov $0x3F8, %dx
+    mov $90, %al               # 'Z'
     out %al, %dx
-    mov $33, %eax        # '!'
-    out %al, %dx
-    
+    # If returns, hang
+.Lhang:
     hlt
-    jmp .
+    jmp .Lhang

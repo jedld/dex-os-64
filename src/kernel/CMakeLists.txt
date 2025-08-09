@@ -14,5 +14,5 @@ set(KERNEL_SOURCES
 add_executable(kernel32 ${KERNEL_SOURCES})
 set_target_properties(kernel32 PROPERTIES OUTPUT_NAME kernel.elf)
 
-target_compile_options(kernel32 PRIVATE -fno-pic -fno-pie)
-target_link_options(kernel32 PRIVATE "-Wl,-no-pie" "-Wl,-T,${CMAKE_CURRENT_SOURCE_DIR}/arch/x86_64/linker.ld")
+target_compile_options(kernel32 PRIVATE -m32 -ffreestanding -fno-stack-protector -fno-pic -fno-pie -fno-builtin -march=i386 -mno-sse -mno-mmx)
+target_link_options(kernel32 PRIVATE -m32 -fuse-ld=lld -nostdlib -Wl,-static -Wl,--no-undefined -Wl,-no-pie -Wl,-T,${CMAKE_CURRENT_SOURCE_DIR}/arch/x86_64/linker.ld)

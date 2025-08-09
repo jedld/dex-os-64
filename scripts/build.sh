@@ -54,26 +54,26 @@ fi
   cmake --build . --target uefi_aarch64
 )
 
-# kernel (i386)
-(
-  cd "${BUILD_DIR}/kernel"
-  if [ -f CMakeCache.txt ]; then
-    cmake \
-      -DCMAKE_C_COMPILER=clang \
-      -DCMAKE_ASM_COMPILER=clang \
-      -DCMAKE_C_FLAGS="-m32 -ffreestanding -fno-stack-protector -fno-pic -fno-pie -fno-builtin -march=i386 -mno-sse -mno-mmx" \
-      -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld -m32 -nostdlib -Wl,-static -Wl,--no-undefined" \
-      "${ROOT_DIR}/src/kernel"
-  else
-    cmake -G "${GEN}" \
-      -DCMAKE_C_COMPILER=clang \
-      -DCMAKE_ASM_COMPILER=clang \
-      -DCMAKE_C_FLAGS="-m32 -ffreestanding -fno-stack-protector -fno-pic -fno-pie -fno-builtin -march=i386 -mno-sse -mno-mmx" \
-      -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld -m32 -nostdlib -Wl,-static -Wl,--no-undefined" \
-      "${ROOT_DIR}/src/kernel"
-  fi
-  cmake --build . --target kernel32
-)
+# kernel (i386) — disabled for now (loader32 + kernel64 path is used)
+# (
+#   cd "${BUILD_DIR}/kernel"
+#   if [ -f CMakeCache.txt ]; then
+#     cmake \
+#       -DCMAKE_C_COMPILER=clang \
+#       -DCMAKE_ASM_COMPILER=clang \
+#       -DCMAKE_C_FLAGS="-m32 -ffreestanding -fno-stack-protector -fno-pic -fno-pie -fno-builtin -march=i386 -mno-sse -mno-mmx" \
+#       -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld -m32 -nostdlib -Wl,-static -Wl,--no-undefined" \
+#       "${ROOT_DIR}/src/kernel"
+#   else
+#     cmake -G "${GEN}" \
+#       -DCMAKE_C_COMPILER=clang \
+#       -DCMAKE_ASM_COMPILER=clang \
+#       -DCMAKE_C_FLAGS="-m32 -ffreestanding -fno-stack-protector -fno-pic -fno-pie -fno-builtin -march=i386 -mno-sse -mno-mmx" \
+#       -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld -m32 -nostdlib -Wl,-static -Wl,--no-undefined" \
+#       "${ROOT_DIR}/src/kernel"
+#   fi
+#   cmake --build . --target kernel32
+# )
 
 # loader32 (i386)
 (
@@ -99,13 +99,13 @@ fi
     cmake \
       -DCMAKE_C_COMPILER=clang \
       -DCMAKE_ASM_COMPILER=clang \
-      -DCMAKE_C_FLAGS="-ffreestanding -fno-pic -fno-pie -m64" \
+  -DCMAKE_C_FLAGS="-ffreestanding -m64" \
       "${ROOT_DIR}/src/kernel64"
   else
     cmake -G "${GEN}" \
       -DCMAKE_C_COMPILER=clang \
       -DCMAKE_ASM_COMPILER=clang \
-      -DCMAKE_C_FLAGS="-ffreestanding -fno-pic -fno-pie -m64" \
+  -DCMAKE_C_FLAGS="-ffreestanding -m64" \
       "${ROOT_DIR}/src/kernel64"
   fi
   cmake --build . --target kernel64_elf
@@ -121,9 +121,9 @@ fi
 
 # Also stage GRUB config for packaging
 mkdir -p "${BUILD_DIR}/stage/EFI/BOOT" "${BUILD_DIR}/stage/boot/grub"
-if [ -f "${BUILD_DIR}/kernel/kernel.elf" ]; then
-  cp -f "${BUILD_DIR}/kernel/kernel.elf" "${BUILD_DIR}/stage/boot/kernel.elf"
-fi
+# if [ -f "${BUILD_DIR}/kernel/kernel.elf" ]; then
+#   cp -f "${BUILD_DIR}/kernel/kernel.elf" "${BUILD_DIR}/stage/boot/kernel.elf"
+# fi
 [ -f "${BUILD_DIR}/loader32/loader32.elf" ] && cp -f "${BUILD_DIR}/loader32/loader32.elf" "${BUILD_DIR}/stage/boot/"
 [ -f "${BUILD_DIR}/kernel64/kernel64.bin" ] && cp -f "${BUILD_DIR}/kernel64/kernel64.bin" "${BUILD_DIR}/stage/boot/"
 [ -f "${BUILD_DIR}/uefi/BOOTX64.EFI" ] && cp -f "${BUILD_DIR}/uefi/BOOTX64.EFI" "${BUILD_DIR}/stage/EFI/BOOT/"
