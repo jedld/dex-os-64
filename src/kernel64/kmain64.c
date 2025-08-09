@@ -8,6 +8,11 @@
 #include "serial.h"
 #include "input.h"
 #include "memtest.h"
+// New subsystems
+#include "../kernel/mm/pmm.h"
+#include "../kernel/mm/vmm.h"
+#include "../kernel/mm/kmalloc.h"
+#include "sched/sched.h"
 
 static void print_vendor(void) {
     cpuid_regs r0 = cpuid(0, 0);
@@ -108,11 +113,22 @@ static void print_banner_and_info(uint64_t mb_addr) {
     console_write("\n");
 }
 
+// Demo worker threads for scheduler
+static void workerA(void* _) { (void)_; for (int i=0;i<50;++i){ console_putc('.'); sched_yield(); } }
+static void workerB(void* _) { (void)_; for (int i=0;i<50;++i){ console_putc('-'); sched_yield(); } }
+
 void kmain64(void* mb_info) {
     console_init();
     uint64_t mb_addr = (uint64_t)mb_info;
 
     print_banner_and_info(mb_addr);
+    // Bring up memory subsystems
+    pmm_init((void*)mb_addr, 0);
+    vmm_init_identity();
+    // Early heap: 256 KiB static region
+    static uint8_t early_heap[256 * 1024] __attribute__((aligned(16)));
+    kmalloc_init(early_heap, sizeof(early_heap));
+    console_write("PMM/VMM initialized. Free: "); console_write_hex64(pmm_free_bytes()); console_write(" bytes\n\n");
 menu_loop:
     console_write("Menu:\n");
     console_write("  [Q]uick memtest (16 MiB)\n");
@@ -172,8 +188,14 @@ menu_loop:
             print_banner_and_info(mb_addr);
             goto menu_loop;
         } else if (ch == 'C' || ch == '\n' || ch == '\r' || ch == ' ') {
-            // Continue boot flow. For now, just stop updating menu.
-            return;
+            // Continue boot: demo cooperative scheduler
+            console_write("Starting scheduler demo...\n");
+            // Two demo threads printing dots and dashes
+            sched_create(workerA, NULL);
+            sched_create(workerB, NULL);
+            sched_start();
+            // If returns, halt
+            for(;;) { __asm__ volatile ("hlt"); }
         } else {
             console_write("Unknown option. Try again: ");
         }

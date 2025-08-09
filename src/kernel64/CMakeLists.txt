@@ -9,6 +9,10 @@ set(SRCS
   console.c
   input.c
   memtest.c
+  ../kernel/mm/pmm.c
+  ../kernel/mm/vmm.c
+  ../kernel/mm/kmalloc.c
+  sched/sched.c
 )
 
 add_executable(kernel64_elf ${SRCS})
