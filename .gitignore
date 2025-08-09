@@ -1,0 +1,21 @@
+# Build outputs
+/build/
+/**/CMakeFiles/
+/**/CMakeCache.txt
+/**/cmake_install.cmake
+/**/Makefile
+/**/build.ninja
+/**/rules.ninja
+/**/.ninja_deps
+/**/.ninja_log
+
+# IDE
+/.vscode/
+
+# ISO and staged trees
+/build/iso_root/
+/build/stage/
+/build/hello-os.iso
+
+# QEMU Variables copy
+/build/OVMF_VARS.fd

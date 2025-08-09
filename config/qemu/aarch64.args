@@ -1,0 +1,4 @@
+-machine virt
+-cpu cortex-a57
+-m 256M
+-serial mon:stdio
