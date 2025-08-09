@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run BIOS QEMU for the GRUB ISO (loader32 + kernel64), with optional no-reboot
-# and automatic debug/serial logging.
+# Run LEGACY BIOS QEMU for the GRUB ISO (loader32 + kernel64)
+# This forces BIOS mode (no UEFI) for testing non-UEFI boot compatibility
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 BUILD_DIR="${ROOT_DIR}/build"
@@ -37,6 +37,9 @@ QEMU=(
   -serial stdio
   -d "${DEBUG_FLAGS}"
   -D "${DEBUG_LOG}"
+  -machine pc              # Force PC machine type (BIOS)
+  -cpu qemu64             # Standard x86_64 CPU
+  # NO -bios or -drive pflash = forces SeaBIOS (legacy BIOS)
 )
 
 if [[ "${NO_REBOOT}" == "1" ]]; then

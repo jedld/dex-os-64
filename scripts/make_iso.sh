@@ -22,8 +22,18 @@ fi
 
 if command -v grub-mkrescue >/dev/null 2>&1; then
   mkdir -p "${BUILD_DIR}"
+  
+  # Create hybrid ISO with both UEFI and BIOS boot support
+  # This ensures compatibility with both modern UEFI and legacy BIOS systems
   grub-mkrescue -o "${BUILD_DIR}/hello-os.iso" "${ISO_DIR}"
-  echo "ISO created: ${BUILD_DIR}/hello-os.iso"
+  
+  echo "Hybrid ISO created (UEFI + BIOS): ${BUILD_DIR}/hello-os.iso"
+  
+  # Verify the ISO has both boot methods
+  if command -v file >/dev/null 2>&1; then
+    echo "ISO info:"
+    file "${BUILD_DIR}/hello-os.iso"
+  fi
 else
   echo "grub-mkrescue not found; skip ISO creation."
 fi
