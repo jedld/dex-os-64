@@ -15,6 +15,7 @@ BUILD_DIR="${ROOT_DIR}/build"
 
 NO_REBOOT=${NO_REBOOT:-1}
 NO_SHUTDOWN=${NO_SHUTDOWN:-0}
+HEADLESS=${HEADLESS:-0}
 DEBUG_FLAGS=${DEBUG_FLAGS:-"int,guest_errors"}
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 DEBUG_LOG=${DEBUG_LOG:-"${BUILD_DIR}/qemu-${TIMESTAMP}.log"}
@@ -82,6 +83,10 @@ QEMU=(
   -d "${DEBUG_FLAGS}"
   -D "${DEBUG_LOG}"
 )
+
+if [[ "${HEADLESS}" == "1" ]]; then
+  QEMU+=( -display none )
+fi
 
 if [[ "${NO_REBOOT}" == "1" ]]; then
   QEMU+=( -no-reboot )
