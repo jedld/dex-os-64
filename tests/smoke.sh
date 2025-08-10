@@ -12,21 +12,8 @@ run_and_check() {
   local timeout_s=${TIMEOUT_S:-25}
 
   echo "[INFO] Running ${mode} headless (timeout ${timeout_s}s)"
-  # Run headless; bound duration to avoid hanging CI
-  ( HEADLESS=1 NO_REBOOT=1 NO_SHUTDOWN=1 ${script} & )
-  local pid=$!
-  local elapsed=0
-  while kill -0 $pid 2>/dev/null; do
-    sleep 1
-    elapsed=$((elapsed+1))
-    if [[ $elapsed -ge $timeout_s ]]; then
-      echo "[INFO] Timeout reached; terminating ${mode} run (pid ${pid})"
-      kill $pid 2>/dev/null || true
-      sleep 1
-      kill -9 $pid 2>/dev/null || true
-      break
-    fi
-  done
+  # Run headless with timeout; do not fail the script if timeout kills QEMU
+  TIMEOUT_S="${timeout_s}" timeout -k 2 "${timeout_s}s" env HEADLESS=1 NO_REBOOT=1 NO_SHUTDOWN=1 ${script} || true
 
   local log=$(ls -1 build/serial-*.log 2>/dev/null | tail -n 1 || true)
   if [[ -z "${log}" ]]; then
