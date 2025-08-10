@@ -31,6 +31,14 @@ void console_write_hex64(uint64_t v);
 void console_write_dec(uint64_t v);
 void console_set_color(uint8_t fg, uint8_t bg);
 
+// Scrollback/page view controls for the active console
+// Maintain a bounded scrollback buffer and allow PageUp/PageDown style navigation.
+// By default, one "page" equals (rows-1) lines.
+void console_page_up(void);
+void console_page_down(void);
+void console_page_home(void); // jump to oldest available
+void console_page_end(void);  // jump back to live output
+
 // Console geometry hint (defaults for initial console)
 #ifndef CONSOLE_COLS
 #define CONSOLE_COLS 80

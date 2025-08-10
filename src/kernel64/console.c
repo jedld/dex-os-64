@@ -6,6 +6,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
+// Forward declare and ensure definition appears before first use
+static void render_view(Console* c);
+
 // VGA text backend state
 #define VGA_MEM_DEFAULT ((volatile uint16_t*)0xB8000)
 #ifndef CONSOLE_COLS
@@ -13,6 +16,11 @@
 #endif
 #define VGA_DEFAULT_COLS CONSOLE_COLS
 #define VGA_DEFAULT_ROWS 25
+
+// Configure scrollback capacity (number of text rows retained beyond visible rows)
+#ifndef CONSOLE_SCROLLBACK_ROWS
+#define CONSOLE_SCROLLBACK_ROWS 512
+#endif
 
 struct Console {
     // geometry
@@ -23,8 +31,15 @@ struct Console {
     // backend binding
     volatile uint16_t* vram; // mapped text VRAM (VGA 0xB8000 or EGA text framebuffer)
     uint16_t vram_pitch_chars; // chars per line (bytes per line / 2)
-    // offscreen text buffer (VGA 80x25 max)
+    // offscreen text buffer (visible window)
     uint16_t cells[VGA_DEFAULT_COLS * VGA_DEFAULT_ROWS];
+    // scrollback ring buffer (stores full rows of text)
+    uint16_t sbuf[(VGA_DEFAULT_COLS) * (CONSOLE_SCROLLBACK_ROWS)];
+    uint32_t sbuf_rows;      // capacity in rows (== CONSOLE_SCROLLBACK_ROWS)
+    uint32_t sbuf_head;      // next write row index (ring)
+    uint32_t sbuf_count;     // number of valid rows in buffer (<= sbuf_rows)
+    // viewport offset from the latest row (0 = live view, increasing means scrolled up)
+    uint32_t view_offset_rows;
 };
 
 static inline uint16_t vga_entry(char c, uint8_t color) {
@@ -40,8 +55,55 @@ static inline void vga_move_hw_cursor(uint16_t row, uint16_t col, uint16_t cols)
 static Console s_consoles[4];
 static Console* s_active = 0;
 
+// --- Scrollback view renderer (placed before uses) ---
+static void render_view(Console* c) {
+    // If viewing history (view_offset_rows > 0), draw rows from scrollback + tail of cells
+    if (c != s_active) return;
+    uint16_t cols = c->cols, rows = c->rows;
+    // Compute how many historical rows are visible at the top
+    uint32_t off = c->view_offset_rows;
+    // Clamp offset to available history
+    if (off > c->sbuf_count) off = c->sbuf_count;
+    // We display rows top..bottom as: last 'off' rows from history (top-first), then remaining from cells
+    // Determine how many history rows to show (max = rows)
+    uint32_t hist_to_show = (off > rows ? rows : off);
+    // Starting history row index from newest
+    // Newest history row is at (sbuf_head - 1 + sbuf_rows) % sbuf_rows
+    // We want to show the older rows above it
+    int32_t idx = (int32_t)c->sbuf_head - 1;
+    // position idx to the first row to draw (hist_to_show-1 rows older)
+    idx -= (int32_t)hist_to_show - 1;
+    // Normalize
+    while (idx < 0) idx += (int32_t)c->sbuf_rows;
+    // Draw history rows
+    uint16_t r = 0;
+    for (uint32_t k = 0; k < hist_to_show && r < rows; ++k, ++r) {
+        uint16_t* src = &c->sbuf[((uint32_t)idx % c->sbuf_rows) * cols];
+        for (uint16_t co = 0; co < cols; ++co) c->vram[r * c->vram_pitch_chars + co] = src[co];
+        idx = (idx + 1) % (int32_t)c->sbuf_rows;
+    }
+    // Then draw the bottom part from current visible cells.
+    // Drop the top 'hist_to_show' rows from the live window so total fits on screen.
+    if (hist_to_show < rows) {
+        for (; r < rows; ++r) {
+            uint16_t src_row = (uint16_t)(r - hist_to_show);
+            for (uint16_t co = 0; co < cols; ++co) {
+                c->vram[r * c->vram_pitch_chars + co] = c->cells[src_row * cols + co];
+            }
+        }
+    }
+    // Hide hardware cursor when not at live view
+    if (c->view_offset_rows != 0) {
+        vga_move_hw_cursor((uint16_t)(rows - 1), 0, cols); // park at last line start
+    } else {
+        vga_move_hw_cursor(c->row, c->col, c->cols);
+    }
+}
+
 static void vga_flush(Console* c) {
     if (c != s_active) return;
+    // If user scrolled back, draw composed view (history + current window)
+    if (c->view_offset_rows != 0) { render_view(c); return; }
     for (uint16_t r = 0; r < c->rows; ++r) {
         for (uint16_t co = 0; co < c->cols; ++co) {
             // write into bound VRAM, respecting pitch
@@ -60,24 +122,37 @@ static void vga_clear(Console* c) {
         }
     }
     c->row = c->col = 0;
+    // Clear scrollback
+    c->sbuf_rows = CONSOLE_SCROLLBACK_ROWS;
+    c->sbuf_head = 0; c->sbuf_count = 0; c->view_offset_rows = 0;
     if (c == s_active) {
         vga_flush(c);
     }
 }
 
 static void vga_scroll_up(Console* c) {
-    // scroll by one line
+    // Before shifting visible window, append the top line to scrollback buffer
     uint16_t cols = c->cols, rows = c->rows;
+    // Push row 0 of cells into sbuf
+    uint16_t* dst = &c->sbuf[(c->sbuf_head % c->sbuf_rows) * cols];
+    for (uint16_t co = 0; co < cols; ++co) dst[co] = c->cells[0 * cols + co];
+    c->sbuf_head = (c->sbuf_head + 1) % c->sbuf_rows;
+    if (c->sbuf_count < c->sbuf_rows) c->sbuf_count++;
+    // If user is viewing history, keep the viewport pinned to the same content
+    // by moving one row further into history as new lines arrive.
+    if (c->view_offset_rows > 0 && c->view_offset_rows < c->sbuf_count) {
+        c->view_offset_rows++;
+        if (c->view_offset_rows > c->sbuf_count) c->view_offset_rows = c->sbuf_count;
+    }
+    // Now shift visible lines up by one
     for (uint16_t r = 1; r < rows; ++r) {
         for (uint16_t co = 0; co < cols; ++co) {
             c->cells[(r - 1) * cols + co] = c->cells[r * cols + co];
         }
     }
-    // clear last line
+    // clear last visible line
     uint16_t fill = vga_entry(' ', c->color);
-    for (uint16_t co = 0; co < cols; ++co) {
-        c->cells[(rows - 1) * cols + co] = fill;
-    }
+    for (uint16_t co = 0; co < cols; ++co) c->cells[(rows - 1) * cols + co] = fill;
 }
 
 static void vga_putc(Console* c, char ch) {
@@ -94,7 +169,8 @@ static void vga_putc(Console* c, char ch) {
         c->cells[prow * c->cols + pcol] = vga_entry(ch, c->color);
         if (++c->col >= c->cols) { c->col = 0; if (++c->row >= c->rows) { vga_scroll_up(c); c->row = c->rows - 1; scrolled = 1; } }
         if (c == s_active) {
-            if (scrolled) {
+            if (scrolled || c->view_offset_rows != 0) {
+                // When not at live view, or on scroll, reflush full viewport
                 vga_flush(c);
             } else {
                 c->vram[prow * c->vram_pitch_chars + pcol] = c->cells[prow * c->cols + pcol];
@@ -121,7 +197,7 @@ void console_init(void) {
         c0->color = 0x0F;
         c0->row = c0->col = 0;
         bind_backend_defaults(c0, VGA_MEM_DEFAULT, VGA_DEFAULT_COLS);
-        vga_clear(c0);
+    vga_clear(c0);
     } else {
         vga_flush(c0);
     }
@@ -204,3 +280,23 @@ void console_init_from_mb2(uint64_t mb2_addr) {
     // For RGB (type=1) or indexed (type=0) we keep VGA text for now; a framebuffer
     // graphics console will be added in a follow-up.
 }
+
+// --- Scrollback view controls ---
+void console_page_up(void) {
+    Console* c = s_active; if (!c) return;
+    uint16_t page = (c->rows > 1 ? (uint16_t)(c->rows - 1) : 1);
+    uint32_t max_off = c->sbuf_count;
+    if (c->view_offset_rows + page > max_off) c->view_offset_rows = max_off; else c->view_offset_rows += page;
+    render_view(c);
+}
+
+void console_page_down(void) {
+    Console* c = s_active; if (!c) return;
+    uint16_t page = (c->rows > 1 ? (uint16_t)(c->rows - 1) : 1);
+    if (c->view_offset_rows <= page) c->view_offset_rows = 0; else c->view_offset_rows -= page;
+    render_view(c);
+}
+
+void console_page_home(void) { Console* c = s_active; if (!c) return; c->view_offset_rows = c->sbuf_count; render_view(c); }
+void console_page_end(void)  { Console* c = s_active; if (!c) return; c->view_offset_rows = 0; render_view(c); }
+

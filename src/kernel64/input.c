@@ -72,6 +72,8 @@ static int ps2_try_read_event_internal(key_event_t* ev) {
             case 0x47: ev->type = KEY_HOME;  ev->mods = s_mods; return 1;
             case 0x4F: ev->type = KEY_END;   ev->mods = s_mods; return 1;
             case 0x53: ev->type = KEY_DELETE;ev->mods = s_mods; return 1;
+            case 0x49: ev->type = KEY_PGUP;  ev->mods = s_mods; return 1;
+            case 0x51: ev->type = KEY_PGDN;  ev->mods = s_mods; return 1;
             default: return 0;
         }
     }
@@ -147,6 +149,8 @@ uint64_t input_readline(char* buf, uint64_t max_len) {
     for (;;) {
         key_event_t ev; input_read_event(&ev);
         if (ev.type == KEY_ENTER) { console_putc('\n'); break; }
+    if (ev.type == KEY_PGUP)  { console_page_up();  continue; }
+    if (ev.type == KEY_PGDN)  { console_page_down(); continue; }
         if (ev.type == KEY_LEFT) {
             if (cur > 0) { console_putc('\b'); cur--; }
             continue;
@@ -156,10 +160,14 @@ uint64_t input_readline(char* buf, uint64_t max_len) {
             continue;
         }
         if (ev.type == KEY_HOME) {
+            // Ctrl+Home: jump to oldest scrollback (viewport)
+            if (ev.mods & MOD_CTRL) { console_page_home(); continue; }
             while (cur > 0) { console_putc('\b'); cur--; }
             continue;
         }
         if (ev.type == KEY_END) {
+            // Ctrl+End: jump to live output (viewport end)
+            if (ev.mods & MOD_CTRL) { console_page_end(); continue; }
             while (cur < len) { console_putc(buf[cur]); cur++; }
             continue;
         }

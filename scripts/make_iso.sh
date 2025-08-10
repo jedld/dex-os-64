@@ -20,6 +20,36 @@ if [ -f "${BUILD_DIR}/stage/boot/kernel64.bin" ]; then
   cp -f "${BUILD_DIR}/stage/boot/kernel64.bin" "${ISO_DIR}/boot/"
 fi
 
+# Create a simple root image (2 MiB). If mkfs.exfat is available, format it.
+if [ ! -f "${ISO_DIR}/boot/root.img" ]; then
+  dd if=/dev/zero of="${ISO_DIR}/boot/root.img" bs=1M count=2 status=none
+fi
+
+# Try to format as exFAT so the kernel can mount it as /root from the ISO.
+if command -v mkfs.exfat >/dev/null 2>&1; then
+  # Only (re)format if it doesn't already look like exFAT (cheap heuristic)
+  if ! file "${ISO_DIR}/boot/root.img" | grep -qi 'exfat'; then
+    mkfs.exfat -n ISOBOOT "${ISO_DIR}/boot/root.img" >/dev/null 2>&1 || true
+  fi
+  # If we can mount exFAT, add a sample file inside root.img for validation
+  if command -v mount >/dev/null 2>&1 && command -v umount >/dev/null 2>&1; then
+    TMPMNT="${BUILD_DIR}/mnt_rootimg"
+    rm -rf "${TMPMNT}" && mkdir -p "${TMPMNT}"
+    # Attempt to loop-mount; exfat kernel support or exfat-fuse must be present on host
+    if sudo mount -o loop "${ISO_DIR}/boot/root.img" "${TMPMNT}" 2>/dev/null; then
+      mkdir -p "${TMPMNT}/etc"
+      echo "Hello from dex-os root.img at $(date -u +%Y-%m-%dT%H:%M:%SZ)" | sudo tee "${TMPMNT}/hello.txt" >/dev/null
+      echo "dex-root=true" | sudo tee "${TMPMNT}/etc/os-release" >/dev/null
+      sync || true
+      sudo umount "${TMPMNT}" || true
+    else
+      echo "[make_iso] Could not loop-mount root.img (no exFAT mount support?). Skipping sample file."
+    fi
+  fi
+else
+  echo "[make_iso] mkfs.exfat not found; root.img will be blank and kernel will fall back to ram0."
+fi
+
 if command -v grub-mkrescue >/dev/null 2>&1; then
   mkdir -p "${BUILD_DIR}"
   

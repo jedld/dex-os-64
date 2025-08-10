@@ -21,6 +21,8 @@ typedef enum {
 	KEY_HOME,
 	KEY_END,
 	KEY_DELETE,
+	KEY_PGUP,
+	KEY_PGDN,
 } key_type_t;
 
 typedef struct {

@@ -28,3 +28,6 @@ block_device_t* block_next(block_device_t* dev);
 // Optional: scan all registered block devices for MBR partitions and
 // register child devices named "<parent>pN" with LBA offset applied.
 void block_scan_partitions(void);
+
+// Create a memory-backed block device from an existing memory range
+int memdisk_register(const char* name, void* base, uint64_t bytes, uint32_t sector_size, int writable);

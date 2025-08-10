@@ -32,6 +32,7 @@ static void cmd_help(void) {
     console_write("  mkexfat <dev> [label]   - format device as exFAT\n");
     console_write("  mkfs exfat <dev> [lbl]  - same as mkexfat\n");
     console_write("  cat <path>             - print file contents\n");
+    console_write("  hexdump <path> [off len]- hex+ASCII dump (off,len hex)\n");
     console_write("  stat <path>            - show file size/type\n");
     console_write("  touch <path>           - create empty file\n");
     console_write("  write <path> <text>    - write text to file (overwrite)\n");
@@ -41,6 +42,7 @@ static void cmd_help(void) {
         console_write("  demo                   - dots/dashes thread demo\n");
         console_write("  smp [N]                - spawn N worker threads\n");
         console_write("  memtest quick|range    - run memory tests\n");
+    console_write("\nTip: Use PageUp/PageDown to scroll; Ctrl+Home jumps to top, Ctrl+End to live.\n");
 }
 
 static void show_info(void) {
@@ -53,6 +55,8 @@ static int strcmp(const char* a, const char* b) {
 }
 
 static void shell_prompt(void) {
+    // Always snap back to live view before showing the next prompt
+    console_page_end();
     console_write("dex> ");
 }
 
@@ -89,11 +93,8 @@ int translate_unix_path(const char* unix_path, char* mount_path, int mount_path_
         }
         first_comp[i] = 0;
         
-        // Check if first component is a known mount point
-        // We'll check for "dev" specifically for now, can be extended
-        if (str_len(first_comp) > 0 && (
-            strcmp(first_comp, "dev") == 0 ||
-            strcmp(first_comp, "root") == 0)) {
+        // Check if first component is a mounted filesystem name
+        if (str_len(first_comp) > 0 && vfs_has_mount(first_comp)) {
             
             // This is a mount point, construct mount:path
             int pos = 0;
@@ -119,23 +120,21 @@ int translate_unix_path(const char* unix_path, char* mount_path, int mount_path_
             mount_path[pos] = 0;
             return 0;
         } else {
-            // Not a mount point, treat as path in current/root mount
-            if (s_cwd_mnt[0]) {
-                // Use current mount
-                int pos = 0;
-                for (int j = 0; s_cwd_mnt[j] && pos < mount_path_len - 1; j++) {
-                    mount_path[pos++] = s_cwd_mnt[j];
-                }
-                if (pos < mount_path_len - 1) mount_path[pos++] = ':';
-                // Copy the path starting from the first component
-                while (*unix_path && pos < mount_path_len - 1) {
-                    mount_path[pos++] = *unix_path++;
-                }
-                mount_path[pos] = 0;
-                return 0;
-            } else {
-                return -1; // No current mount
+            // Not a mount point: treat as absolute path on root mount if present, else cwd mount
+            const char* target_mnt = vfs_has_mount("root") ? "root" : (s_cwd_mnt[0] ? s_cwd_mnt : NULL);
+            if (!target_mnt) return -1;
+            int pos = 0;
+            for (int j = 0; target_mnt[j] && pos < mount_path_len - 1; j++) {
+                mount_path[pos++] = target_mnt[j];
             }
+            if (pos < mount_path_len - 1) mount_path[pos++] = ':';
+            // Copy path including leading '/'
+            const char* up = unix_path;
+            while (*up && pos < mount_path_len - 1) {
+                mount_path[pos++] = *up++;
+            }
+            mount_path[pos] = 0;
+            return 0;
         }
     } else {
         // Relative path - use existing resolve_path logic
@@ -149,9 +148,13 @@ static void skip_ws(char** p){ while(is_ws(**p)) (*p)++; }
 
 // List available mount points for root directory listing
 static void list_root_directory(void) {
-    console_write("dev\n");   // devfs mount point  
-    console_write("root\n");  // exfat mount point
-    // Add more mount points here as they are added
+    // Enumerate all mount points
+    int n = vfs_mount_count();
+    for (int i=0; i<n; ++i) {
+        char m[16]; if (vfs_get_mount_name(i, m, sizeof(m))==0) {
+            console_write(m); console_putc('\n');
+        }
+    }
 }
 
 // Resolve a possibly relative path into mount:name form in out[...]
@@ -530,47 +533,23 @@ static void shell_handle_line(char* buf, uint64_t n) {
         }
     } else if (strcmp(cmd, "ls") == 0) {
         char full[192];
-        char unix_path[192];
-        
-        if (*args) {
-            str_copy(unix_path, args, sizeof(unix_path));
+        if (!*args) {
+            // No args: list current directory by direct cwd mount:path
+            if (!s_cwd_mnt[0]) { console_write("(no cwd)\n"); return; }
+            int p=0; for(int i=0; s_cwd_mnt[i] && p<(int)sizeof(full)-1; ++i) full[p++]=s_cwd_mnt[i];
+            if (p < (int)sizeof(full)-1) full[p++] = ':';
+            if (p < (int)sizeof(full)-1) full[p++] = '/';
+            for (int i=0; s_cwd_path[i] && p<(int)sizeof(full)-1; ++i) full[p++]=s_cwd_path[i];
+            full[p]=0;
         } else {
-            // Use current directory - construct Unix path from cwd
-            if (s_cwd_mnt[0]) {
-                if (strcmp(s_cwd_mnt, "dev") == 0) {
-                    str_copy(unix_path, "/dev", sizeof(unix_path));
-                    if (s_cwd_path[0]) {
-                        int len = str_len(unix_path);
-                        if (len < (int)sizeof(unix_path) - 1) {
-                            unix_path[len++] = '/';
-                            str_copy(unix_path + len, s_cwd_path, sizeof(unix_path) - len);
-                        }
-                    }
-                } else if (strcmp(s_cwd_mnt, "root") == 0) {
-                    if (s_cwd_path[0]) {
-                        unix_path[0] = '/';
-                        str_copy(unix_path + 1, s_cwd_path, sizeof(unix_path) - 1);
-                    } else {
-                        str_copy(unix_path, "/", sizeof(unix_path));
-                    }
-                } else {
-                    str_copy(unix_path, "/", sizeof(unix_path));
-                }
-            } else {
-                str_copy(unix_path, "/", sizeof(unix_path));
+            char unix_path[192];
+            str_copy(unix_path, args, sizeof(unix_path));
+            // Special case: explicit '/' means global root mounts list
+            if (strcmp(unix_path, "/") == 0) { list_root_directory(); return; }
+            if (translate_unix_path(unix_path, full, sizeof(full)) != 0) {
+                console_write("ls: path resolution failed\n");
+                return;
             }
-        }
-        
-        // Check for special case: root directory
-        if (strcmp(unix_path, "/") == 0) {
-            list_root_directory();
-            return;
-        }
-        
-        // Translate Unix path to mount:path format
-        if (translate_unix_path(unix_path, full, sizeof(full)) != 0) {
-            console_write("ls: path resolution failed\n");
-            return;
         }
         
         vfs_node_t* n = vfs_open(full);
@@ -597,6 +576,43 @@ static void shell_handle_line(char* buf, uint64_t n) {
                 char buf[256]; uint64_t off=0; for(;;){ int r=vfs_read(n, off, buf, sizeof(buf)); if(r<=0) break; for(int i=0;i<r;++i) console_putc(buf[i]); off += (uint64_t)r; } console_putc('\n');
             }
         }
+    } else if (strcmp(cmd, "hexdump") == 0) {
+        // hexdump <path> [offset_hex length_hex]
+        if (!*args) { console_write("usage: hexdump <path> [off len]\n"); }
+        else {
+            char* a = args;
+            // parse path token
+            char path[192]; int p=0; while(*a && !is_ws(*a) && p<(int)sizeof(path)-1){ path[p++]=*a++; } path[p]=0; skip_ws(&a);
+            // parse optional offset and length (hex)
+            uint64_t off=0, len=0; int have_off=0, have_len=0;
+            if (*a){ have_off=1; while(*a){ char c=*a++; int v; if(c>='0'&&c<='9') v=c-'0'; else if(c>='a'&&c<='f') v=10+(c-'a'); else if(c>='A'&&c<='F') v=10+(c-'A'); else break; off=(off<<4)|((uint64_t)v);} skip_ws(&a);} 
+            if (*a){ have_len=1; while(*a){ char c=*a++; int v; if(c>='0'&&c<='9') v=c-'0'; else if(c>='a'&&c<='f') v=10+(c-'a'); else if(c>='A'&&c<='F') v=10+(c-'A'); else break; len=(len<<4)|((uint64_t)v);} }
+            char full[192]; if (translate_unix_path(path, full, sizeof(full)) != 0) { resolve_path(path, full, sizeof(full)); }
+            vfs_node_t* n = vfs_open(full);
+            if (!n) { console_write("hexdump: open failed\n"); }
+            else {
+                uint8_t buf[16]; uint64_t pos = off; uint64_t remaining = (have_len? len : (uint64_t)0xFFFFFFFFFFFFFFFFULL);
+                while (remaining > 0) {
+                    uint64_t to_read = (remaining < 16 ? remaining : 16);
+                    int r = vfs_read(n, pos, (char*)buf, (uint64_t)to_read);
+                    if (r <= 0) break;
+                    // print offset
+                    console_write_hex64(pos); console_write(": ");
+                    // hex bytes (two hex chars per byte, grouped 8+8)
+                    for (int i=0;i<16;++i){
+                        if(i<r){ write_hex8(buf[i]); } else { console_write("  "); }
+                        if(i==7) console_putc(' ');
+                        console_putc(' ');
+                    }
+                    console_write(" |");
+                    for (int i=0;i<r;++i){ char c = (buf[i]>=32 && buf[i]<127)? (char)buf[i] : '.'; console_putc(c);} 
+                    for (int i=r;i<16;++i) console_putc(' ');
+                    console_write("|\n");
+                    pos += (uint64_t)r; if (have_len) remaining -= (uint64_t)r;
+                    if (r < 16 && !have_len) { /* EOF */ break; }
+                }
+            }
+        }
     } else if (strcmp(cmd, "stat") == 0) {
         if (!*args) { console_write("usage: stat <path>\n"); }
         else {
@@ -611,7 +627,7 @@ static void shell_handle_line(char* buf, uint64_t n) {
         }
     } else if (strcmp(cmd, "touch") == 0) {
         if (!*args) { console_write("usage: touch <path>\n"); }
-        else { char full[192]; resolve_path(args, full, sizeof(full)); int rc=vfs_create(full,0); if(rc!=0) console_write("touch failed\n"); }
+    else { char full[192]; if (translate_unix_path(args, full, sizeof(full)) != 0) resolve_path(args, full, sizeof(full)); int rc=vfs_create(full,0); if(rc!=0) console_write("touch failed\n"); }
     } else if (strcmp(cmd, "write") == 0) {
         // write <path> <text>
         char* a=args; if(!*a){ console_write("usage: write <path> <text>\n"); }
@@ -620,7 +636,7 @@ static void shell_handle_line(char* buf, uint64_t n) {
             char path[192]; int p=0; while(*a && !is_ws(*a) && p< (int)sizeof(path)-1){ path[p++]=*a++; } path[p]=0; skip_ws(&a);
             if (!path[0]) { console_write("usage: write <path> <text>\n"); }
             else {
-                char full[192]; resolve_path(path, full, sizeof(full));
+        char full[192]; if (translate_unix_path(path, full, sizeof(full)) != 0) resolve_path(path, full, sizeof(full));
                 vfs_node_t* n = vfs_open(full);
                 if (!n) { // try create then reopen
                     if (vfs_create(full,0)!=0) { console_write("write: create failed\n"); }
@@ -635,7 +651,7 @@ static void shell_handle_line(char* buf, uint64_t n) {
         }
     } else if (strcmp(cmd, "rm") == 0) {
         if (!*args) { console_write("usage: rm <path>\n"); }
-        else { char full[192]; resolve_path(args, full, sizeof(full)); int rc=vfs_unlink(full); if(rc!=0) console_write("rm failed\n"); }
+    else { char full[192]; if (translate_unix_path(args, full, sizeof(full)) != 0) resolve_path(args, full, sizeof(full)); int rc=vfs_unlink(full); if(rc!=0) console_write("rm failed\n"); }
     } else if (strcmp(cmd, "fill") == 0) {
         // fill <path> <size_hex> [ch]
         char* a=args; if(!*a){ console_write("usage: fill <path> <size_hex> [ch]\n"); }
@@ -648,7 +664,7 @@ static void shell_handle_line(char* buf, uint64_t n) {
                 skip_ws(&a); char ch = (*a? *a : 'A');
                 if(sz==0){ console_write("fill: size must be > 0\n"); }
                 else {
-                    char full[192]; resolve_path(path, full, sizeof(full));
+            char full[192]; if (translate_unix_path(path, full, sizeof(full)) != 0) resolve_path(path, full, sizeof(full));
                     vfs_node_t* n = vfs_open(full);
                     if(!n){ if(vfs_create(full,0)!=0){ console_write("fill: create failed\n"); }
                         n = vfs_open(full);

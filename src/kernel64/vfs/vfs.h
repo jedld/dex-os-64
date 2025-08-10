@@ -41,3 +41,7 @@ int vfs_unlink(const char* path);
 
 // Utility for shell
 void vfs_list_mounts(void);
+// Helpers for shells/UI: query mounts
+int vfs_has_mount(const char* name);           // returns 1 if a mount with 'name' exists
+int vfs_mount_count(void);                     // number of active mounts
+int vfs_get_mount_name(int idx, char* out, int outn); // copy mount name by index; returns 0 on success

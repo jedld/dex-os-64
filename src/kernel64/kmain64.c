@@ -25,6 +25,8 @@ int ramdisk_create(const char* name, uint64_t bytes);
 void display_console_register(void);
 void kb_ps2_register(void);
 void shell_main(void*);
+// memdisk
+#include "block/block.h"
 
 static void s_puts(const char* s){
     while (*s) { serial_putc(*s++); }
@@ -246,10 +248,41 @@ void kmain64(void* mb_info) {
     if (exfat_format_device("ram0", "" )==0) { s_puts("[k64] exfat mkfs OK on ram0"); }
     else { s_puts("[k64] exfat mkfs FAILED on ram0"); }
     // 4) Mount exfat as 'root'
-    s_puts("[k64] mount exfat root enter");
-    rc = vfs_mount("exfat", "root", "ram0");
-    if (rc==0) { s_puts("[k64] mounted exfat 'root' on ram0"); }
-    else { s_puts("[k64] mount exfat root FAILED"); }
+    // Prefer a Multiboot2 module named "root.img" if present; expose as memdisk and mount.
+    const mb2_tag* mt = mb2_first_tag(mb_addr);
+    int mounted_from_module = 0;
+    while (mt && mt->type != MB2_TAG_END) {
+        if (mt->type == MB2_TAG_MODULE) {
+            const mb2_tag_module* m = (const mb2_tag_module*)mt;
+            const char* ms = mb2_mod_string(m);
+            // If module string contains "root.img", use it
+            int match = 0;
+            if (ms) { const char* p = ms; while (*p) { if (*p=='r' && p[1]=='o' && p[2]=='o' && p[3]=='t') { match = 1; break; } ++p; } }
+            if (match) {
+                uint64_t start = mb2_mod_start(m);
+                uint64_t end   = mb2_mod_end(m);
+                if (end > start) {
+                    uint64_t bytes = end - start;
+                    // Assume 512-byte sectors for ISO/IMG content
+                    console_write("[k64] MB2 module root.img start="); console_write_hex64(start); console_write(" end="); console_write_hex64(end); console_write(" bytes="); console_write_hex64(bytes); console_write("\n");
+                    if (memdisk_register("iso0", (void*)(uintptr_t)start, bytes, 512, 0)==0) {
+                        // Attempt to mount exFAT directly; if needed, user can run bootroot to mount partition
+                        s_puts("[k64] mount exfat root enter (iso0)");
+                        rc = vfs_mount("exfat", "root", "iso0");
+                        if (rc==0) { s_puts("[k64] mounted exfat 'root' on iso0"); mounted_from_module = 1; }
+                    }
+                }
+                break; // only consider first matching module
+            }
+        }
+        mt = mb2_next_tag(mt);
+    }
+    if (!mounted_from_module) {
+        s_puts("[k64] mount exfat root enter (ram0)");
+        rc = vfs_mount("exfat", "root", "ram0");
+        if (rc==0) { s_puts("[k64] mounted exfat 'root' on ram0"); }
+        else { s_puts("[k64] mount exfat root FAILED"); }
+    }
     console_write("Mounts after setup:\n");
     vfs_list_mounts();
     console_write("\n");

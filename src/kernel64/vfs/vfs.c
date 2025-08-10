@@ -93,6 +93,10 @@ int vfs_stat(const char* path, uint64_t* size, int* is_dir){
 
 void vfs_list_mounts(void){ console_write("Mounts:\n"); for(int i=0;i<g_mount_count;++i){ console_write("  "); console_write(g_mounts[i].mname); console_write("\n"); }}
 
+int vfs_has_mount(const char* name){ if(!name||!*name) return 0; for(int i=0;i<g_mount_count;++i){ if(str_eq(g_mounts[i].mname,name)) return 1; } return 0; }
+int vfs_mount_count(void){ return g_mount_count; }
+int vfs_get_mount_name(int idx, char* out, int outn){ if(idx<0||idx>=g_mount_count||!out||outn<=0) return -1; str_cpy(out,g_mounts[idx].mname,outn); return 0; }
+
 static int parse_mount_and_sub(const char* path, mount_t** out_mt, const char** out_sub){
     const char* p = path; const char* sep = path; while(*sep && *sep!=':') ++sep; if(*sep!=':') return -1; char m[8]; int n= (sep-p<7? (int)(sep-p):7); for(int i=0;i<n;++i) m[i]=p[i]; m[n]=0; mount_t* mt=find_mount(m); if(!mt) return -1; const char* sub = (*sep==':'? sep+1:sep); *out_mt=mt; *out_sub=sub; return 0; }
 

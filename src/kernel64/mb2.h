@@ -17,6 +17,25 @@
 
 #pragma pack(push,1)
 typedef struct { uint32_t type, size; } mb2_tag;
+// Multiboot2 Module tag (type=3) — per spec, addresses are 32-bit physical
+typedef struct {
+    mb2_tag tag;       // type=3, size
+    uint32_t mod_start; // physical start (32-bit)
+    uint32_t mod_end;   // physical end (exclusive, 32-bit)
+    // followed by zero-terminated string (module cmdline/name)
+} mb2_tag_module;
+
+static inline uint64_t mb2_mod_start(const mb2_tag_module* m){
+    return (uint64_t)m->mod_start;
+}
+static inline uint64_t mb2_mod_end(const mb2_tag_module* m){
+    return (uint64_t)m->mod_end;
+}
+static inline const char* mb2_mod_string(const mb2_tag_module* m){
+    const char* s = (const char*)(m+1);
+    return s;
+}
+
 
 // Multiboot2 Memory Map tag (type=6)
 typedef struct {

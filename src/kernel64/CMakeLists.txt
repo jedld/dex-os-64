@@ -18,6 +18,7 @@ set(SRCS
   usb/usb.c
   block/block.c
   block/ramdisk.c
+  block/memdisk.c
   vfs/vfs.c
   fs/devfs.c
   fs/exfat.c
