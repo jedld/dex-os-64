@@ -2,6 +2,8 @@
 #include "pmm.h"
 #include <stdint.h>
 #include <stddef.h>
+// Use the shared Multiboot2 tag definitions to avoid ID mismatches
+#include "../../kernel64/mb2.h"
 
 // Simple region list of usable physical memory from Multiboot2
 typedef struct {
@@ -28,84 +30,93 @@ static uint8_t* g_bitmap = NULL;        // stored in .bss; allocated at compile 
 #endif
 static uint8_t g_bitmap_storage[PMM_MAX_FRAMES/8];
 
-// Multiboot2 minimal structures to parse memory info
-struct mb2_tag { uint32_t type, size; };
-struct mb2_tag_mmap { uint32_t type, size, entry_size, entry_version; };
-struct mb2_mmap_entry { uint64_t addr, len; uint32_t type, zero; };
-struct mb2_tag_basic_meminfo { uint32_t type, size; uint32_t mem_lower, mem_upper; };
-struct mb2_tag_efi_mmap { uint32_t type, size; uint32_t desc_size, desc_version; };
-// Minimal subset of EFI memory descriptor (UEFI)
-struct efi_mem_desc { uint32_t Type, Pad; uint64_t PhysicalStart, VirtualStart, NumberOfPages, Attribute; };
-enum { MB2_TAG_TYPE_MMAP = 6, MB2_TAG_TYPE_BASIC_MEMINFO = 4, MB2_TAG_TYPE_EFI_MMAP = 12 };
+// Note: mb2.h provides the correct tag IDs and structures.
 
 static inline uint64_t align_down(uint64_t x, uint64_t a) { return x & ~(a-1); }
 static inline uint64_t align_up(uint64_t x, uint64_t a) { return (x + (a-1)) & ~(a-1); }
 
 static void add_region(uint64_t base, uint64_t len) {
     if (len == 0 || g_region_count >= MAX_REGIONS) return;
-    g_regions[g_region_count++] = (region_t){ base, len };
+    // Clamp region to a reasonable upper bound (4GiB) to match early identity map
+    const uint64_t cap = 4ULL * 1024 * 1024 * 1024; // 4GiB
+    if (base >= cap) return;
+    uint64_t end = base + len;
+    if (end > cap) end = cap;
+    if (end <= base) return;
+    g_regions[g_region_count++] = (region_t){ base, end - base };
 }
 
-static void parse_mb2(void* info) {
-    uint8_t* base = (uint8_t*)info;
-    uint32_t total_size = *(uint32_t*)base;
-    uint32_t off = 8; // skip header
-    int saw_mmap = 0;
-    int saw_efi = 0;
-    while (off + sizeof(struct mb2_tag) <= total_size) {
-        struct mb2_tag* tag = (struct mb2_tag*)(base + off);
-        if (tag->type == 0 || tag->size < sizeof(struct mb2_tag)) break;
-        if (tag->type == MB2_TAG_TYPE_EFI_MMAP) {
-            // Prefer EFI map when available
-            struct mb2_tag_efi_mmap* em = (struct mb2_tag_efi_mmap*)tag;
-            uint32_t esize = em->desc_size;
-            uint32_t payload = em->size - sizeof(struct mb2_tag_efi_mmap);
-            uint8_t* ep = (uint8_t*)em + sizeof(struct mb2_tag_efi_mmap);
-            for (uint32_t o = 0; o + esize <= payload; o += esize) {
-                struct efi_mem_desc* d = (struct efi_mem_desc*)(ep + o);
-                uint64_t bytes = d->NumberOfPages * 4096ULL;
-                g_total_phys += bytes;
-                if (d->Type == 7 /*EfiConventionalMemory*/) {
-                    uint64_t s = align_up(d->PhysicalStart, PMM_FRAME_SIZE);
-                    uint64_t end = align_down(d->PhysicalStart + bytes, PMM_FRAME_SIZE);
-                    if (end > s) { add_region(s, end - s); g_total_usable += (end - s); }
-                }
-            }
-            saw_efi = 1;
-        } else if (tag->type == MB2_TAG_TYPE_MMAP) {
-            struct mb2_tag_mmap* mm = (struct mb2_tag_mmap*)tag;
-            uint32_t esize = mm->entry_size;
-            uint32_t entries_size = mm->size - sizeof(struct mb2_tag_mmap);
-            uint8_t* ep = (uint8_t*)mm + sizeof(struct mb2_tag_mmap);
-            for (uint32_t o = 0; o + esize <= entries_size; o += esize) {
-                struct mb2_mmap_entry* e = (struct mb2_mmap_entry*)(ep + o);
-                g_total_phys += e->len;
-                if (e->type == 1 /*available*/) {
-                    uint64_t s = align_up(e->addr, PMM_FRAME_SIZE);
-                    uint64_t end = align_down(e->addr + e->len, PMM_FRAME_SIZE);
-                    if (end > s) {
-                        add_region(s, end - s);
-                        g_total_usable += (end - s);
+static void parse_mb2(void* info, int from_uefi) {
+    if (!info) return;
+    const uint8_t* base = (const uint8_t*)info;
+    uint32_t total_size = *(const uint32_t*)base;
+    const mb2_tag* tag = (const mb2_tag*)(base + 8); // skip total_size + reserved
+
+    int saw_efi = 0, saw_mmap = 0;
+    // Prefer EFI memory map only when booted via UEFI
+    if (from_uefi) {
+        for (const mb2_tag* t = tag; (const uint8_t*)t < base + total_size && t->type != MB2_TAG_END; t = mb2_next_tag(t)) {
+            if (t->type == MB2_TAG_EFI_MMAP) {
+                const mb2_tag_efi_mmap_hdr* em = (const mb2_tag_efi_mmap_hdr*)t;
+                uint32_t esize = em->desc_size;
+                uint32_t count = mb2_efi_desc_count(em);
+                const uint8_t* ep = (const uint8_t*)mb2_efi_first_desc(em);
+                for (uint32_t i = 0; i < count; ++i) {
+                    const efi_mem_desc* d = (const efi_mem_desc*)(ep + i * esize);
+                    uint64_t bytes = d->NumberOfPages * 4096ULL;
+                    // Track totals conservatively within 4GiB cap
+                    if (d->Type == 7 /*EfiConventionalMemory*/) {
+                        uint64_t s = align_up(d->PhysicalStart, PMM_FRAME_SIZE);
+                        uint64_t end = align_down(d->PhysicalStart + bytes, PMM_FRAME_SIZE);
+                        add_region(s, end > s ? (end - s) : 0);
                     }
                 }
+                saw_efi = 1;
+                break;
             }
-            saw_mmap = 1;
-        } else if (tag->type == MB2_TAG_TYPE_BASIC_MEMINFO) {
-            // Use as a fallback if nothing else parsed
-            struct mb2_tag_basic_meminfo* bi = (struct mb2_tag_basic_meminfo*)tag;
-            if (!saw_efi && !saw_mmap) {
+        }
+    }
+    if (!saw_efi) {
+        for (const mb2_tag* t = tag; (const uint8_t*)t < base + total_size && t->type != MB2_TAG_END; t = mb2_next_tag(t)) {
+            if (t->type == MB2_TAG_MMAP) {
+                const mb2_tag_mmap_hdr* mm = (const mb2_tag_mmap_hdr*)t;
+                const uint8_t* p = (const uint8_t*)mm;
+                uint32_t entry_size = *(const uint32_t*)(p + 8);
+                uint32_t offset = 16;
+                while (offset + entry_size <= mm->tag.size) {
+                    const mb2_mmap_entry* e = (const mb2_mmap_entry*)(p + offset);
+                    if (e->type == 1 /* available */) {
+                        uint64_t s = align_up(e->base_addr, PMM_FRAME_SIZE);
+                        uint64_t end = align_down(e->length + e->base_addr, PMM_FRAME_SIZE);
+                        add_region(s, end > s ? (end - s) : 0);
+                    }
+                    offset += entry_size;
+                }
+                saw_mmap = 1;
+            }
+        }
+    }
+    // Fallback to basic meminfo if neither detailed map was present
+    if (!saw_efi && !saw_mmap) {
+        for (const mb2_tag* t = tag; (const uint8_t*)t < base + total_size && t->type != MB2_TAG_END; t = mb2_next_tag(t)) {
+            if (t->type == MB2_TAG_BASIC_MEMINFO) {
+                const mb2_tag_basic_meminfo* bi = (const mb2_tag_basic_meminfo*)t;
                 uint64_t lower = (uint64_t)bi->mem_lower * 1024ULL;
                 uint64_t upper = (uint64_t)bi->mem_upper * 1024ULL;
-                g_total_phys = lower + upper;
-                // Conservatively treat only upper memory (above 1MiB) as usable
+                // Treat only upper memory (above 1MiB) as usable; cap via add_region
                 if (upper > 0) {
                     uint64_t base1 = 0x100000ULL;
                     add_region(base1, upper);
-                    g_total_usable = upper;
                 }
+                break;
             }
         }
-        off += (tag->size + 7) & ~7U; // align 8
+    }
+    // Recompute totals from the clamped region list
+    g_total_phys = 0; g_total_usable = 0;
+    for (uint32_t i = 0; i < g_region_count; ++i) {
+        g_total_phys += g_regions[i].len;
+        g_total_usable += g_regions[i].len;
     }
 }
 
@@ -176,12 +187,11 @@ static void clear_frame(uint64_t idx) {
 }
 
 void pmm_init(void* info, int from_uefi) {
-    (void)from_uefi;
     g_region_count = 0;
     g_total_phys = g_total_usable = g_free = 0;
     g_bitmap_base = g_bitmap_limit = 0;
     g_bitmap = g_bitmap_storage;
-    if (info) parse_mb2(info);
+    if (info) parse_mb2(info, from_uefi);
     build_bitmap_bounds();
 
     // Initially mark all frames in bitmap range as used

@@ -18,7 +18,13 @@
 #pragma pack(push,1)
 typedef struct { uint32_t type, size; } mb2_tag;
 
-typedef struct { mb2_tag tag; /* followed by entries */ } mb2_tag_mmap_hdr;
+// Multiboot2 Memory Map tag (type=6)
+typedef struct {
+    mb2_tag tag;        // type=6, size=total size of this tag including header
+    uint32_t entry_size;    // size of each mb2_mmap_entry
+    uint32_t entry_version; // version
+    // followed by entries[]
+} mb2_tag_mmap_hdr;
 
 typedef struct {
     uint64_t base_addr;

@@ -167,7 +167,6 @@ void console_write_hex64(uint64_t v) {
         uint8_t nyb = (v >> (i*4)) & 0xF;
         char ch = lut[nyb];
         console_putc(ch);
-        serial_putc(ch);
     }
 }
 
@@ -175,7 +174,7 @@ void console_write_dec(uint64_t v) {
     char buf[32]; size_t i = 0;
     if (v == 0) { console_putc('0'); serial_putc('0'); return; }
     while (v > 0 && i < sizeof(buf)) { buf[i++] = '0' + (v % 10); v /= 10; }
-    while (i--) { char ch = buf[i]; console_putc(ch); serial_putc(ch); }
+    while (i--) { char ch = buf[i]; console_putc(ch); }
 }
 
 // Initialize console choosing MB2 framebuffer when present.

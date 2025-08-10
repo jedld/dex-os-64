@@ -17,6 +17,7 @@
 #include "dev/device.h"
 #include "vfs/vfs.h"
 #include "fs/exfat.h"
+#include "usb/usb.h"
 void exfat_register(void);
 void devfs_register(void);
 int ramdisk_create(const char* name, uint64_t bytes);
@@ -218,6 +219,8 @@ void kmain64(void* mb_info) {
     // Register basic devices
     display_console_register();
     kb_ps2_register();
+    // Probe PCI/USB controllers (skeleton)
+    usb_init();
     // Register filesystems
     exfat_register(); s_puts("[k64] exfat_register");
     devfs_register(); s_puts("[k64] devfs_register");
@@ -232,10 +235,17 @@ void kmain64(void* mb_info) {
     uint64_t ram_bytes = 8ULL * 1024 * 1024;
     if (ramdisk_create("ram0", ram_bytes)==0) { s_puts("[k64] ramdisk ram0 created"); }
     else { s_puts("[k64] ramdisk ram0 creation FAILED"); }
+    // Discover partitions on available block devices (MBR only for now)
+    extern void block_scan_partitions(void);
+    s_puts("[k64] scan partitions enter");
+    block_scan_partitions();
+    s_puts("[k64] scan partitions exit");
     // 3) Format as exFAT
+    s_puts("[k64] exfat mkfs enter");
     if (exfat_format_device("ram0", "" )==0) { s_puts("[k64] exfat mkfs OK on ram0"); }
     else { s_puts("[k64] exfat mkfs FAILED on ram0"); }
     // 4) Mount exfat as 'root'
+    s_puts("[k64] mount exfat root enter");
     rc = vfs_mount("exfat", "root", "ram0");
     if (rc==0) { s_puts("[k64] mounted exfat 'root' on ram0"); }
     else { s_puts("[k64] mount exfat root FAILED"); }

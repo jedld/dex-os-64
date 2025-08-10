@@ -30,26 +30,40 @@ static vfs_fs_ops_t exfat_ops;
 static int exfat_mount(block_device_t* bdev, const char* mname, void** out_priv){ 
     (void)mname; 
     console_write("[exfat] mount enter\n");
-    
-    if (bdev->sector_size != 512) { 
-        console_write("exfat: requires 512B sectors\n"); 
-        return -1; 
-    } 
-    
-    // Skip VBR validation for simplified demo - just create minimal fs structure
-    exfat_fs_t* fs = (exfat_fs_t*)kmalloc(sizeof(exfat_fs_t)); 
-    if (!fs) return -1; 
-    fs->bdev = bdev;
-    
-    // Use minimal default values for demo
-    fs->fat_offset = 128;           // sectors
-    fs->fat_length = 1024;          // sectors  
-    fs->cluster_heap_off = 1152;    // sectors
-    fs->bytes_per_sector = 512;
-    fs->sectors_per_cluster = 1;
-    fs->cluster_size = 512;
-    fs->root_dir_cluster = 2;       // first data cluster
-    
+    if (!out_priv) return -1;
+    if (bdev->sector_size != 512) { console_write("exfat: requires 512B sectors\n"); return -1; }
+    exfat_fs_t* fs = (exfat_fs_t*)kmalloc(sizeof(exfat_fs_t)); if (!fs) return -1; fs->bdev = bdev;
+    // Try to read VBR at LBA0
+    uint8_t vbr[512]; int have_vbr = 0;
+    if (bdev->ops->read(bdev, 0, vbr, 1) == 1) {
+        // exFAT VBR has "EXFAT   " at offset 3
+        if (vbr[3]=='E' && vbr[4]=='X' && vbr[5]=='F' && vbr[6]=='A' && vbr[7]=='T' && vbr[8]==' ' && vbr[9]==' ' && vbr[10]==' ') {
+            have_vbr = 1;
+            uint8_t bps_shift = vbr[0x6C];
+            uint8_t spc = vbr[0x6D];
+            uint32_t fat_off = *(uint32_t*)&vbr[0x80];
+            uint32_t fat_len = *(uint32_t*)&vbr[0x84];
+            uint32_t heap_off = *(uint32_t*)&vbr[0x88];
+            uint32_t root_cl = *(uint32_t*)&vbr[0xA0];
+            fs->bytes_per_sector = 1u << bps_shift;
+            fs->sectors_per_cluster = spc;
+            fs->fat_offset = fat_off;
+            fs->fat_length = fat_len;
+            fs->cluster_heap_off = heap_off;
+            fs->cluster_size = fs->bytes_per_sector * fs->sectors_per_cluster;
+            fs->root_dir_cluster = root_cl;
+        }
+    }
+    if (!have_vbr){
+        // Fallback demo defaults
+        fs->fat_offset = 128;           // sectors
+        fs->fat_length = 1024;          // sectors  
+        fs->cluster_heap_off = 1152;    // sectors
+        fs->bytes_per_sector = 512;
+        fs->sectors_per_cluster = 1;
+        fs->cluster_size = 512;
+        fs->root_dir_cluster = 2;       // first data cluster
+    }
     *out_priv = fs; 
     console_write("[exfat] mount exit\n");
     return 0;

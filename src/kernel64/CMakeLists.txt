@@ -14,6 +14,8 @@ set(SRCS
   dev/device.c
   dev/display_console.c
   dev/keyboard_ps2.c
+  pci/pci.c
+  usb/usb.c
   block/block.c
   block/ramdisk.c
   vfs/vfs.c

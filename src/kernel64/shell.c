@@ -32,6 +32,7 @@ static void cmd_help(void) {
     console_write("  touch <path>           - create empty file\n");
     console_write("  write <path> <text>    - write text to file (overwrite)\n");
     console_write("  rm <path>              - remove file\n");
+    console_write("  bootroot               - try mount /dev/* partition as root\n");
     console_write("  fill <path> <size_hex> [ch] - write N bytes of ch (default 'A')\n");
         console_write("  demo                   - dots/dashes thread demo\n");
         console_write("  smp [N]                - spawn N worker threads\n");
@@ -55,10 +56,10 @@ static void shell_prompt(void) {
 static char s_cwd_mnt[8] = { 'r','o','o','t', 0 };
 static char s_cwd_path[128] = {0}; // without leading '/'
 
-// Forward declarations for helper functions
-static void str_copy(char* d, const char* s, int n);
-static int str_len(const char* s);
-static void resolve_path(const char* in, char* out, int outn);
+// Helper functions (declare/define before first use)
+static int str_len(const char* s){ int n=0; while(s&&s[n])++n; return n; }
+static void str_copy(char* d, const char* s, int n){ int i=0; if(n<=0) return; for(; i<n-1 && s && s[i]; ++i) d[i]=s[i]; d[i]=0; }
+static void resolve_path(const char* in, char* out, int outn); // defined later
 
 // Unix-style path translation functions
 int translate_unix_path(const char* unix_path, char* mount_path, int mount_path_len) {
@@ -148,9 +149,6 @@ static void list_root_directory(void) {
     console_write("root\n");  // exfat mount point
     // Add more mount points here as they are added
 }
-
-static void str_copy(char* d, const char* s, int n){ int i=0; for(; i<n-1 && s[i]; ++i) d[i]=s[i]; d[i]=0; }
-static int str_len(const char* s){ int n=0; while(s&&s[n])++n; return n; }
 
 // Resolve a possibly relative path into mount:name form in out[...]
 static void resolve_path(const char* in, char* out, int outn){
@@ -527,6 +525,18 @@ static void shell_handle_line(char* buf, uint64_t n) {
             int rc = exfat_format_device(dev, label[0]?label:NULL);
             if (rc!=0) console_write("mkfs exfat failed\n"); else console_write("formatted exfat\n");
         } else { console_write("mkfs: unsupported fs\n"); }
+    } else if (strcmp(cmd, "bootroot") == 0) {
+        // crude heuristic: mount first partition device ending with 'p1' as root
+        block_device_t* b = block_first(); int mounted=0;
+        while (b){
+            int len=0; while(b->name[len]) len++;
+            if (len>=2 && b->name[len-2]=='p' && b->name[len-1]=='1'){
+                int rc = vfs_mount("exfat","root", b->name);
+                if (rc==0){ console_write("mounted root on /dev/"); console_write(b->name); console_write("\n"); mounted=1; break; }
+            }
+            b = block_next(b);
+        }
+        if (!mounted) console_write("bootroot: no suitable partition found\n");
     } else if (strcmp(cmd, "ps") == 0) {
         sched_thread_info_t ti[16];
         int cur = sched_current_id();
