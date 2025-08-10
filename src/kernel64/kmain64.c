@@ -18,6 +18,7 @@
 #include "vfs/vfs.h"
 #include "fs/exfat.h"
 #include "usb/usb.h"
+#include "version.h"
 void exfat_register(void);
 void devfs_register(void);
 int ramdisk_create(const char* name, uint64_t bytes);
@@ -136,7 +137,7 @@ static void print_memory_map(uint64_t mb2_addr) {
 static void print_banner_and_info(uint64_t mb_addr) {
     console_clear();
     console_set_color(0x0F, 0x00);
-    console_write("dex-os-64 (x86_64)\n\n");
+    console_write(KERNEL_NAME " " KERNEL_VERSION " (" KERNEL_ARCH ")\n\n");
     print_vendor();
     print_brand();
     print_features();

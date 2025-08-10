@@ -8,17 +8,21 @@
 int ramdisk_create(const char* name, uint64_t bytes);
 #include <stddef.h>
 #include <stdint.h>
+#include "version.h"
+#include "pci/pci.h"
 
 static void cmd_help(void) {
     console_write("Built-in commands:\n");
     console_write("  help   - show this help\n");
     console_write("  echo X - echo text X\n");
     console_write("  info   - system info\n");
+    console_write("  uname  - kernel name/version/arch\n");
     console_write("  clear  - clear screen\n");
     console_write("  ps     - list threads\n");
     console_write("  mem    - memory totals (phys/free)\n");
     console_write("  free   - free memory bytes\n");
     console_write("  used   - used memory bytes\n");
+    console_write("  lspci  - list PCI devices\n");
     console_write("  mkram <name> <bytes_hex> - create RAM disk\n");
     console_write("  mount <fs> <mnt> <dev>   - mount device\n");
     console_write("  mounts                   - list mounts\n");
@@ -210,6 +214,152 @@ static void set_cwd_from_path(const char* path){
     str_copy(s_cwd_path, sub, (int)sizeof(s_cwd_path));
 }
 
+// Small hex helpers for compact IDs
+static void write_hex8(uint8_t v){
+    static const char lut[16] = "0123456789ABCDEF";
+    char s[2]; s[0]=lut[(v>>4)&0xF]; s[1]=lut[v&0xF];
+    console_putc(s[0]); console_putc(s[1]);
+}
+static void write_hex16(uint16_t v){ write_hex8((uint8_t)(v>>8)); write_hex8((uint8_t)(v&0xFF)); }
+
+// Basic PCI name decoders
+static const char* pci_vendor_name(uint16_t vid){
+    switch(vid){
+        case 0x8086: return "Intel";
+        case 0x1022: return "AMD";
+        case 0x10DE: return "NVIDIA";
+        case 0x1002: return "ATI/AMD";
+        case 0x1AF4: return "Red Hat/Qumranet (virtio)";
+        case 0x15AD: return "VMware";
+        case 0x10EC: return "Realtek";
+        case 0x14E4: return "Broadcom";
+        case 0x1B36: return "QEMU";
+        default: return NULL;
+    }
+}
+
+static const char* pci_class_name(uint8_t cls){
+    switch(cls){
+        case 0x00: return "Unclassified";
+        case 0x01: return "Storage";
+        case 0x02: return "Network";
+        case 0x03: return "Display";
+        case 0x04: return "Multimedia";
+        case 0x05: return "Memory";
+        case 0x06: return "Bridge";
+        case 0x07: return "Comm";
+        case 0x08: return "System";
+        case 0x09: return "Input";
+        case 0x0A: return "Dock";
+        case 0x0B: return "Processor";
+        case 0x0C: return "SerialBus";
+        case 0x0D: return "Wireless";
+        case 0x0E: return "Intelligent";
+        case 0x0F: return "Satellite";
+        case 0x10: return "Encryption";
+        case 0x11: return "SignalProc";
+        case 0x12: return "Accel";
+        case 0x13: return "Instrumentation";
+        default: return "Unknown";
+    }
+}
+
+static const char* pci_subclass_name(uint8_t cls, uint8_t sub){
+    switch(cls){
+        case 0x01: // Storage
+            switch(sub){
+                case 0x00: return "SCSI";
+                case 0x01: return "IDE";
+                case 0x02: return "Floppy";
+                case 0x03: return "IPI";
+                case 0x04: return "RAID";
+                case 0x05: return "ATA";
+                case 0x06: return "SATA";
+                case 0x07: return "SAS";
+                case 0x08: return "NVM"; // NVMe
+                default: return "Other";
+            }
+        case 0x02: // Network
+            switch(sub){ case 0x00: return "Ethernet"; case 0x80: return "Other"; default: return "Other"; }
+        case 0x03: // Display
+            switch(sub){ case 0x00: return "VGA"; case 0x02: return "3D"; default: return "Other"; }
+        case 0x06: // Bridge
+            switch(sub){ case 0x00: return "Host"; case 0x01: return "ISA"; case 0x04: return "PCI-PCI"; default: return "Other"; }
+        case 0x0C: // Serial bus
+            switch(sub){ case 0x00: return "FireWire"; case 0x01: return "ACCESS.bus"; case 0x02: return "SSA"; case 0x03: return "USB"; case 0x05: return "SMBus"; default: return "Other"; }
+        default:
+            return "Other";
+    }
+}
+
+static const char* pci_prog_if_name(uint8_t cls, uint8_t sub, uint8_t prog){
+    if (cls==0x0C && sub==0x03){ // USB
+        switch(prog){ case 0x00: return "UHCI"; case 0x10: return "OHCI"; case 0x20: return "EHCI"; case 0x30: return "xHCI"; case 0xFE: return "USB Device"; default: return NULL; }
+    }
+    if (cls==0x01 && sub==0x06){ // SATA
+        switch(prog){ case 0x01: return "AHCI"; default: return NULL; }
+    }
+    if (cls==0x01 && sub==0x08){ // NVM
+        switch(prog){ case 0x02: return "NVMe"; default: return NULL; }
+    }
+    return NULL;
+}
+
+static const char* pci_device_name(uint16_t vid, uint16_t did){
+    switch(vid){
+        case 0x1AF4: // virtio
+            switch(did){
+                case 0x1000: return "virtio-net";
+                case 0x1001: return "virtio-block";
+                case 0x1002: return "virtio-balloon";
+                case 0x1003: return "virtio-console";
+                case 0x1004: return "virtio-scsi";
+                case 0x1005: return "virtio-rng";
+                case 0x1041: return "virtio-gpu";
+                default: return "virtio";
+            }
+        case 0x10EC: // Realtek
+            switch(did){ case 0x8139: return "RTL8139"; case 0x8168: return "RTL8168"; default: return "Realtek"; }
+        case 0x8086: // Intel (sample)
+            switch(did){ case 0x100E: return "82540EM (e1000)"; case 0x2922: return "ICH9 AHCI"; default: return "Intel"; }
+        case 0x1B36: // QEMU
+            return "QEMU device";
+        case 0x1022: // AMD
+            return "AMD device";
+        case 0x10DE: // NVIDIA
+            return "NVIDIA device";
+        default:
+            return NULL;
+    }
+}
+
+// PCI enumeration print callback for 'lspci'
+static void shell_pci_print_cb(const pci_device_t* d, void* user) {
+    (void)user;
+    // Location B:D.F
+    console_write("pci ");
+    // Print as hex-padded like 00:01.0
+    write_hex8(d->bus); console_putc(':');
+    write_hex8(d->dev); console_putc('.');
+    console_putc((char)('0' + (d->func & 0x7))); // functions are 0..7
+    console_write("  ");
+    // Vendor and device
+    const char* vname = pci_vendor_name(d->vendor_id);
+    const char* dname = pci_device_name(d->vendor_id, d->device_id);
+    if (vname){ console_write(vname); }
+    else { console_write("Vendor 0x"); write_hex16(d->vendor_id); }
+    console_write("  Dev 0x"); write_hex16(d->device_id);
+    if (dname){ console_write(" ("); console_write(dname); console_write(")"); }
+    console_write("  ");
+    // Class decode
+    const char* cname = pci_class_name(d->class_code);
+    const char* sname = pci_subclass_name(d->class_code, d->subclass);
+    console_write(cname); console_write("/"); console_write(sname);
+    const char* pname = pci_prog_if_name(d->class_code, d->subclass, d->prog_if);
+    if (pname){ console_write(" ("); console_write(pname); console_write(")"); }
+    console_putc('\n');
+}
+
 static void shell_handle_line(char* buf, uint64_t n) {
     buf[n] = '\0';
     // skip leading spaces
@@ -231,6 +381,14 @@ static void shell_handle_line(char* buf, uint64_t n) {
         console_clear();
     } else if (strcmp(cmd, "info") == 0) {
         show_info();
+    } else if (strcmp(cmd, "uname") == 0) {
+        // print kernel identity
+        console_write(KERNEL_NAME);
+        console_write(" ");
+        console_write(KERNEL_VERSION);
+        console_write(" ");
+        console_write(KERNEL_ARCH);
+        console_putc('\n');
     } else if (strcmp(cmd, "mkram") == 0) {
         // mkram <name> <size_hex>
         char name[16]={0}; uint64_t sz=0; {
@@ -567,6 +725,9 @@ static void shell_handle_line(char* buf, uint64_t n) {
         uint64_t total = pmm_total_physical_bytes();
         uint64_t freeb = pmm_free_bytes();
         console_write_hex64(total >= freeb ? (total - freeb) : 0); console_putc('\n');
+    } else if (strcmp(cmd, "lspci") == 0) {
+        // enumerate PCI devices
+        pci_enumerate(shell_pci_print_cb, NULL);
     } else {
         console_write("unknown command. type 'help'\n");
     }
