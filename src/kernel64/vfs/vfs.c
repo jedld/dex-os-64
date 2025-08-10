@@ -9,6 +9,11 @@ static void dbg_put_hex(uint32_t v){
     serial_putc('0'); serial_putc('x');
     for (int i=7;i>=0;--i){ uint8_t n=(v>>(i*4))&0xF; serial_putc(hex[n]); }
 }
+static void dbg_put_hex64(uint64_t v){
+    const char* hex = "0123456789ABCDEF";
+    serial_putc('0'); serial_putc('x');
+    for (int i=15;i>=0;--i){ uint8_t n=(uint8_t)((v>>(i*4))&0xF); serial_putc(hex[n]); }
+}
 #include <stddef.h>
 
 #define MAX_FS 4
@@ -29,6 +34,9 @@ __attribute__((constructor)) static void vfs_dbg_init(void){ /* no-op to ensure 
 
 int vfs_mount(const char* fs_name, const char* mount_name, const char* bdev_name){
     dbg_puts("[vfs] mount enter");
+    dbg_put("[vfs]   fs_name="); dbg_put(fs_name?fs_name:"(null)"); serial_putc('\n');
+    dbg_put("[vfs]   mount_name="); dbg_put(mount_name?mount_name:"(null)"); serial_putc('\n');
+    dbg_put("[vfs]   bdev_name="); dbg_put((bdev_name&&bdev_name[0])?bdev_name:"(none)"); serial_putc('\n');
     if(g_mount_count>=MAX_MOUNTS) return -1;
     // find fs
     const vfs_fs_ops_t* fops=NULL; 
@@ -38,19 +46,26 @@ int vfs_mount(const char* fs_name, const char* mount_name, const char* bdev_name
             break; 
         }
     }
-    if(!fops) return -1;
+    dbg_put("[vfs]   fops="); dbg_put_hex64((uint64_t)(uintptr_t)fops); serial_putc('\n');
+    if(!fops){ dbg_puts("[vfs]   fs not found"); return -1; }
     // find bdev (optional)
     block_device_t* bdev = NULL;
     if (bdev_name && bdev_name[0]) {
         bdev = block_find(bdev_name);
-        if(!bdev) return -1;
+        dbg_put("[vfs]   bdev="); dbg_put_hex64((uint64_t)(uintptr_t)bdev); serial_putc('\n');
+        if(!bdev) { dbg_puts("[vfs]   bdev not found"); return -1; }
     }
     void* priv=NULL; 
-    int rc=fops->mount(bdev,mount_name,&priv); 
-    dbg_puts("[vfs] mount fn returned");
+    int rc=0;
+    dbg_put("[vfs]   fops->mount="); dbg_put_hex64((uint64_t)(uintptr_t)fops->mount); serial_putc('\n');
+    dbg_puts("[vfs]   calling fops->mount...");
+    if (!fops->mount) { dbg_puts("[vfs]   mount fn NULL, skipping"); priv=(void*)1; rc=0; goto mount_done; }
+    rc=fops->mount(bdev,mount_name,&priv); 
+    dbg_put("[vfs]   mount rc="); dbg_put_hex((uint32_t)rc); serial_putc('\n');
+    dbg_put("[vfs]   fs_priv="); dbg_put_hex64((uint64_t)(uintptr_t)priv); serial_putc('\n');
     if(rc!=0) return rc; 
-    dbg_puts("[vfs] mount fn returned");
-    if(rc!=0) return rc;
+mount_done:
+    // record mount
     str_cpy(g_mounts[g_mount_count].mname,mount_name,8); g_mounts[g_mount_count].ops=fops; g_mounts[g_mount_count].fs_priv=priv; g_mount_count++;
     dbg_puts("[vfs] mount exit");
     return 0;

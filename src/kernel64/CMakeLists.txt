@@ -7,6 +7,7 @@ set(SRCS
   start64.S
   kmain64.c
   console.c
+  serial.c  # add serial backend for serial_putc
   input.c
   memtest.c
   lib/mem.c

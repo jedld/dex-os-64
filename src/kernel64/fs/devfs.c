@@ -16,12 +16,16 @@ typedef struct {
     block_device_t* bdev;
 } devfs_node_t;
 
-static const vfs_fs_ops_t devfs_ops;
+// Build ops table at runtime to avoid absolute function-pointer addresses
+// in rodata (image is position-independent at runtime).
+static vfs_fs_ops_t devfs_ops;
 
 static int devfs_mount(block_device_t* bdev, const char* mname, void** out_priv) {
     (void)bdev; (void)mname;
+    { const char* s="[devfs] mount enter\n"; while(*s) serial_putc(*s++); }
     if (!out_priv) return -1;
     *out_priv = (void*)1;
+    { const char* s="[devfs] mount exit\n"; while(*s) serial_putc(*s++); }
     return 0;
 }
 
@@ -138,10 +142,16 @@ static int devfs_write(vfs_node_t* n, uint64_t off, const void* buf, uint64_t le
     return (int)pos;
 }
 
-static const vfs_fs_ops_t devfs_ops = {
-    devfs_mount, devfs_umount, devfs_open, devfs_stat,
-    devfs_read, devfs_readdir, devfs_write,
-    NULL, NULL
-};
-
-void devfs_register(void){ vfs_register_fs("devfs", &devfs_ops); }
+void devfs_register(void){
+    // Fill ops at runtime so function addresses are computed with RIP-relative code
+    devfs_ops.mount   = devfs_mount;
+    devfs_ops.umount  = devfs_umount;
+    devfs_ops.open    = devfs_open;
+    devfs_ops.stat    = devfs_stat;
+    devfs_ops.read    = devfs_read;
+    devfs_ops.readdir = devfs_readdir;
+    devfs_ops.write   = devfs_write;
+    devfs_ops.create  = NULL;
+    devfs_ops.unlink  = NULL;
+    vfs_register_fs("devfs", &devfs_ops);
+}

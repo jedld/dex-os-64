@@ -111,12 +111,23 @@ static void parse_mb2(void* info) {
 
 static void build_bitmap_bounds(void) {
     if (g_region_count == 0) { g_bitmap_base = g_bitmap_limit = 0; return; }
-    uint64_t lo = g_regions[0].base, hi = g_regions[0].base + g_regions[0].len;
-    for (uint32_t i = 1; i < g_region_count; ++i) {
-        if (g_regions[i].base < lo) lo = g_regions[i].base;
-        uint64_t t = g_regions[i].base + g_regions[i].len;
-        if (t > hi) hi = t;
+    // Determine bitmap bounds based on usable regions under a reasonable limit (4GB)
+    uint64_t reasonable_limit = 4ULL * 1024 * 1024 * 1024; // 4GB
+    // Find minimum start and maximum end within the reasonable limit
+    uint64_t lo = (uint64_t)-1;
+    uint64_t hi = 0;
+    for (uint32_t i = 0; i < g_region_count; ++i) {
+        uint64_t base = g_regions[i].base;
+        uint64_t end = base + g_regions[i].len;
+        // Skip regions that start beyond the reasonable limit
+        if (base >= reasonable_limit) continue;
+        // Clip region end to reasonable limit
+        if (end > reasonable_limit) end = reasonable_limit;
+        if (base < lo) lo = base;
+        if (end > hi) hi = end;
     }
+    // If no usable regions within limits, disable bitmap
+    if (hi <= lo) { g_bitmap_base = g_bitmap_limit = 0; return; }
     g_bitmap_base = lo;
     g_bitmap_limit = hi;
     // Cap to storage capacity
@@ -173,13 +184,31 @@ void pmm_init(void* info, int from_uefi) {
     if (info) parse_mb2(info);
     build_bitmap_bounds();
 
-    // Initially mark all usable frames as free; all outside regions are considered used.
-    // Start with all used, then clear usable.
+    // Initially mark all frames in bitmap range as used
     mark_range(g_bitmap_base, g_bitmap_limit - g_bitmap_base, 1);
+    
+    // Then mark usable regions as free, but only within bitmap bounds
+    uint64_t usable_in_range = 0;
     for (uint32_t i = 0; i < g_region_count; ++i) {
-        mark_range(g_regions[i].base, g_regions[i].len, 0);
+        uint64_t reg_start = g_regions[i].base;
+        uint64_t reg_end = g_regions[i].base + g_regions[i].len;
+        
+        // Clip region to bitmap bounds
+        if (reg_start < g_bitmap_base) reg_start = g_bitmap_base;
+        if (reg_end > g_bitmap_limit) reg_end = g_bitmap_limit;
+        
+        if (reg_end > reg_start) {
+            mark_range(reg_start, reg_end - reg_start, 0);
+            usable_in_range += (reg_end - reg_start);
+        }
     }
-    g_free = g_total_usable;
+    g_free = usable_in_range;
+
+    // Reserve frame 0 to avoid allocating a null page
+    pmm_reserve(g_bitmap_base, PMM_FRAME_SIZE);
+
+    // Reserve low memory (<1MiB) to avoid allocating BIOS structures
+    pmm_reserve(0, 0x100000);
 }
 
 uint64_t pmm_total_bytes(void) { return g_total_usable; }

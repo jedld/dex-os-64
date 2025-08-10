@@ -43,11 +43,12 @@ int ramdisk_create(const char* name, uint64_t bytes) {
     if (!rd) return -1;
     // Allocate backing store from physical frames to avoid exhausting the early heap
     uint64_t pages = (rounded + 4095ULL) / 4096ULL;
-    // Ensure allocation stays below 4GiB (identity-mapped by early VMM)
+    // Ensure allocation stays below 1GiB to match conservative identity map
     extern uint64_t pmm_alloc_frames_below(size_t count, uint64_t max_phys_exclusive);
-    uint64_t paddr = pmm_alloc_frames_below((size_t)pages, 1ULL<<32);
+    uint64_t paddr = pmm_alloc_frames_below((size_t)pages, 1ULL<<30);
     if (!paddr) { return -1; }
     rd->data = (uint8_t*)(uintptr_t)paddr; // identity-mapped
+    console_write("ramdisk phys base=0x"); console_write_hex64((uint64_t)paddr); console_write(" size=0x"); console_write_hex64((uint64_t)rounded); console_write("\n");
     // Zero the device
     for (uint64_t i = 0; i < rounded; ++i) rd->data[i] = 0;
     rd->bytes = rounded;
