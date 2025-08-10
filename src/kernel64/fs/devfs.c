@@ -70,7 +70,9 @@ static int devfs_stat(void* fs_priv, const char* path, uint64_t* size, int* is_d
 static int devfs_readdir(vfs_node_t* n, uint32_t idx, char* name_out, uint32_t maxlen){
     if(!n||!name_out||maxlen==0) return -1;
     devfs_node_t* dn=(devfs_node_t*)n->file_priv;
+    if(!dn) { name_out[0]=0; return 0; }
     if(!dn->is_dir){ name_out[0]=0; return 0; }
+    
     uint32_t i=0;
     for(block_device_t* b=block_first(); b; b=block_next(b)){
         if(i==idx){

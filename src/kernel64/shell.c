@@ -21,11 +21,10 @@ static void cmd_help(void) {
     console_write("  used   - used memory bytes\n");
     console_write("  mkram <name> <bytes_hex> - create RAM disk\n");
     console_write("  mount <fs> <mnt> <dev>   - mount device\n");
-    console_write("  mount devfs /dev         - mount device filesystem\n");
     console_write("  mounts                   - list mounts\n");
-    console_write("  ls [path]               - list directory\n");
-    console_write("  cd <path>               - change directory\n");
-    console_write("  pwd                     - print current directory\n");
+    console_write("  ls [path]               - list directory (Unix paths: /, /dev, /dev/ram0)\n");
+    console_write("  cd <path>               - change directory (Unix paths: /, /dev, etc.)\n");
+    console_write("  pwd                     - print current directory (Unix format)\n");
     console_write("  mkexfat <dev> [label]   - format device as exFAT\n");
     console_write("  mkfs exfat <dev> [lbl]  - same as mkexfat\n");
     console_write("  cat <path>             - print file contents\n");
@@ -56,8 +55,99 @@ static void shell_prompt(void) {
 static char s_cwd_mnt[8] = { 'r','o','o','t', 0 };
 static char s_cwd_path[128] = {0}; // without leading '/'
 
+// Forward declarations for helper functions
+static void str_copy(char* d, const char* s, int n);
+static int str_len(const char* s);
+static void resolve_path(const char* in, char* out, int outn);
+
+// Unix-style path translation functions
+int translate_unix_path(const char* unix_path, char* mount_path, int mount_path_len) {
+    if (!unix_path || !mount_path || mount_path_len < 2) return -1;
+    
+    // Handle root directory specially
+    if (unix_path[0] == '/' && unix_path[1] == 0) {
+        // List root directory - use rootfs if mounted, otherwise fall back to current mount
+        str_copy(mount_path, "root:/", mount_path_len);
+        return 0;
+    }
+    
+    if (unix_path[0] == '/') {
+        // Absolute path: /mount/path or /mount or /path
+        const char* p = unix_path + 1; // skip initial /
+        
+        // Extract first component
+        char first_comp[16] = {0};
+        int i = 0;
+        while (p[i] && p[i] != '/' && i < 15) {
+            first_comp[i] = p[i];
+            i++;
+        }
+        first_comp[i] = 0;
+        
+        // Check if first component is a known mount point
+        // We'll check for "dev" specifically for now, can be extended
+        if (str_len(first_comp) > 0 && (
+            strcmp(first_comp, "dev") == 0 ||
+            strcmp(first_comp, "root") == 0)) {
+            
+            // This is a mount point, construct mount:path
+            int pos = 0;
+            // Copy mount name
+            for (int j = 0; first_comp[j] && pos < mount_path_len - 1; j++) {
+                mount_path[pos++] = first_comp[j];
+            }
+            if (pos < mount_path_len - 1) mount_path[pos++] = ':';
+            
+            // Copy rest of path
+            const char* rest = p + i; // rest after mount name
+            if (*rest == '/') rest++; // skip slash
+            if (*rest == 0) {
+                // Just the mount point itself, show root of that mount
+                if (pos < mount_path_len - 1) mount_path[pos++] = '/';
+            } else {
+                // Copy the rest
+                if (pos < mount_path_len - 1) mount_path[pos++] = '/';
+                while (*rest && pos < mount_path_len - 1) {
+                    mount_path[pos++] = *rest++;
+                }
+            }
+            mount_path[pos] = 0;
+            return 0;
+        } else {
+            // Not a mount point, treat as path in current/root mount
+            if (s_cwd_mnt[0]) {
+                // Use current mount
+                int pos = 0;
+                for (int j = 0; s_cwd_mnt[j] && pos < mount_path_len - 1; j++) {
+                    mount_path[pos++] = s_cwd_mnt[j];
+                }
+                if (pos < mount_path_len - 1) mount_path[pos++] = ':';
+                // Copy the path starting from the first component
+                while (*unix_path && pos < mount_path_len - 1) {
+                    mount_path[pos++] = *unix_path++;
+                }
+                mount_path[pos] = 0;
+                return 0;
+            } else {
+                return -1; // No current mount
+            }
+        }
+    } else {
+        // Relative path - use existing resolve_path logic
+        resolve_path(unix_path, mount_path, mount_path_len);
+        return 0;
+    }
+}
+
 static int is_ws(char c){ return c==' '||c=='\t'; }
 static void skip_ws(char** p){ while(is_ws(**p)) (*p)++; }
+
+// List available mount points for root directory listing
+static void list_root_directory(void) {
+    console_write("dev\n");   // devfs mount point  
+    console_write("root\n");  // exfat mount point
+    // Add more mount points here as they are added
+}
 
 static void str_copy(char* d, const char* s, int n){ int i=0; for(; i<n-1 && s[i]; ++i) d[i]=s[i]; d[i]=0; }
 static int str_len(const char* s){ int n=0; while(s&&s[n])++n; return n; }
@@ -176,23 +266,157 @@ static void shell_handle_line(char* buf, uint64_t n) {
         // If no cwd, set cwd to first mount for convenience (not required)
         if (!s_cwd_mnt[0]) { /* no enumeration API yet */ }
     } else if (strcmp(cmd, "pwd") == 0) {
-        if (s_cwd_mnt[0]) { console_write(s_cwd_mnt); console_write(":/"); console_write(s_cwd_path); console_putc('\n'); }
+        if (s_cwd_mnt[0]) { 
+            // Convert to Unix-style path display
+            if (strcmp(s_cwd_mnt, "dev") == 0) {
+                console_write("/dev");
+                if (s_cwd_path[0]) {
+                    console_write("/");
+                    console_write(s_cwd_path);
+                }
+            } else if (strcmp(s_cwd_mnt, "root") == 0) {
+                if (s_cwd_path[0]) {
+                    console_write("/");
+                    console_write(s_cwd_path);
+                } else {
+                    console_write("/");
+                }
+            } else {
+                // Fallback to old format for unknown mounts
+                console_write(s_cwd_mnt); 
+                console_write(":/"); 
+                console_write(s_cwd_path);
+            }
+            console_putc('\n'); 
+        }
         else { console_write("(no cwd)\n"); }
     } else if (strcmp(cmd, "cd") == 0) {
         if (!*args) { console_write("usage: cd <path>\n"); }
         else {
-            char full[192]; resolve_path(args, full, sizeof(full));
+            char full[192];
+            char unix_path[192];
+            
+            // Handle special shortcuts
+            if (strcmp(args, "/") == 0) {
+                // Go to root
+                str_copy(s_cwd_mnt, "root", sizeof(s_cwd_mnt));
+                s_cwd_path[0] = 0;
+                return;
+            }
+            
+            // Check if args looks like a mount name (no '/' or ':')
+            int has_slash = 0, has_colon = 0;
+            for (const char* p = args; *p; p++) {
+                if (*p == '/') has_slash = 1;
+                if (*p == ':') has_colon = 1;
+            }
+            
+            if (!has_slash && !has_colon) {
+                // Treat as mount name, add ":/" suffix
+                int p = 0;
+                for (int i = 0; args[i] && p < (int)sizeof(full) - 3; i++) {
+                    full[p++] = args[i];
+                }
+                if (p < (int)sizeof(full) - 2) {
+                    full[p++] = ':';
+                    full[p++] = '/';
+                }
+                full[p] = 0;
+            } else {
+                // Handle Unix-style path
+                if (args[0] == '/') {
+                    str_copy(unix_path, args, sizeof(unix_path));
+                } else {
+                    // Relative path - construct current Unix path and resolve
+                    char current_unix[192];
+                    if (s_cwd_mnt[0]) {
+                        if (strcmp(s_cwd_mnt, "dev") == 0) {
+                            str_copy(current_unix, "/dev", sizeof(current_unix));
+                            if (s_cwd_path[0]) {
+                                int len = str_len(current_unix);
+                                if (len < (int)sizeof(current_unix) - 1) {
+                                    current_unix[len++] = '/';
+                                    str_copy(current_unix + len, s_cwd_path, sizeof(current_unix) - len);
+                                }
+                            }
+                        } else {
+                            if (s_cwd_path[0]) {
+                                current_unix[0] = '/';
+                                str_copy(current_unix + 1, s_cwd_path, sizeof(current_unix) - 1);
+                            } else {
+                                str_copy(current_unix, "/", sizeof(current_unix));
+                            }
+                        }
+                    } else {
+                        str_copy(current_unix, "/", sizeof(current_unix));
+                    }
+                    
+                    // Simple relative path resolution
+                    int len = str_len(current_unix);
+                    if (len < (int)sizeof(unix_path) - 1) {
+                        str_copy(unix_path, current_unix, sizeof(unix_path));
+                        if (unix_path[len-1] != '/') {
+                            unix_path[len++] = '/';
+                        }
+                        str_copy(unix_path + len, args, sizeof(unix_path) - len);
+                    }
+                }
+                
+                // Translate Unix path to mount:path format
+                if (translate_unix_path(unix_path, full, sizeof(full)) != 0) {
+                    console_write("cd: path resolution failed\n");
+                    return;
+                }
+            }
+            
             if (!full[0]) { console_write("cd: set a mount with 'mount' first or use mount:path\n"); }
             else { set_cwd_from_path(full); }
         }
     } else if (strcmp(cmd, "ls") == 0) {
         char full[192];
-        if (*args) resolve_path(args, full, sizeof(full)); else {
-            if (!s_cwd_mnt[0]) { console_write("ls: no cwd. Use cd or specify mount:path\n"); return; }
-            // build from cwd
-            int p=0; for(; s_cwd_mnt[p] && p< (int)sizeof(full)-2; ++p) full[p]=s_cwd_mnt[p]; full[p++]=':'; full[p++]='/';
-            for(int i=0; s_cwd_path[i] && p<(int)sizeof(full)-1; ++i) full[p++]=s_cwd_path[i]; full[p]=0;
+        char unix_path[192];
+        
+        if (*args) {
+            str_copy(unix_path, args, sizeof(unix_path));
+        } else {
+            // Use current directory - construct Unix path from cwd
+            if (s_cwd_mnt[0]) {
+                if (strcmp(s_cwd_mnt, "dev") == 0) {
+                    str_copy(unix_path, "/dev", sizeof(unix_path));
+                    if (s_cwd_path[0]) {
+                        int len = str_len(unix_path);
+                        if (len < (int)sizeof(unix_path) - 1) {
+                            unix_path[len++] = '/';
+                            str_copy(unix_path + len, s_cwd_path, sizeof(unix_path) - len);
+                        }
+                    }
+                } else if (strcmp(s_cwd_mnt, "root") == 0) {
+                    if (s_cwd_path[0]) {
+                        unix_path[0] = '/';
+                        str_copy(unix_path + 1, s_cwd_path, sizeof(unix_path) - 1);
+                    } else {
+                        str_copy(unix_path, "/", sizeof(unix_path));
+                    }
+                } else {
+                    str_copy(unix_path, "/", sizeof(unix_path));
+                }
+            } else {
+                str_copy(unix_path, "/", sizeof(unix_path));
+            }
         }
+        
+        // Check for special case: root directory
+        if (strcmp(unix_path, "/") == 0) {
+            list_root_directory();
+            return;
+        }
+        
+        // Translate Unix path to mount:path format
+        if (translate_unix_path(unix_path, full, sizeof(full)) != 0) {
+            console_write("ls: path resolution failed\n");
+            return;
+        }
+        
         vfs_node_t* n = vfs_open(full);
         if (!n) { console_write("ls: open failed\n"); }
         else {
@@ -206,7 +430,11 @@ static void shell_handle_line(char* buf, uint64_t n) {
     } else if (strcmp(cmd, "cat") == 0) {
         if (!*args) { console_write("usage: cat <path>\n"); }
         else {
-            char full[192]; resolve_path(args, full, sizeof(full));
+            char full[192];
+            if (translate_unix_path(args, full, sizeof(full)) != 0) {
+                // Fall back to old resolve_path for backward compatibility
+                resolve_path(args, full, sizeof(full));
+            }
             vfs_node_t* n = vfs_open(full);
             if (!n) { console_write("cat: open failed\n"); }
             else {
@@ -216,7 +444,11 @@ static void shell_handle_line(char* buf, uint64_t n) {
     } else if (strcmp(cmd, "stat") == 0) {
         if (!*args) { console_write("usage: stat <path>\n"); }
         else {
-            char full[192]; resolve_path(args, full, sizeof(full));
+            char full[192];
+            if (translate_unix_path(args, full, sizeof(full)) != 0) {
+                // Fall back to old resolve_path for backward compatibility
+                resolve_path(args, full, sizeof(full));
+            }
             uint64_t sz=0; int isdir=0; int rc = vfs_stat(full, &sz, &isdir);
             if (rc!=0) { console_write("stat: not found\n"); }
             else { console_write(isdir?"dir":"file"); console_write(" size=0x"); console_write_hex64(sz); console_putc('\n'); }
