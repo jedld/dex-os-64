@@ -5,10 +5,18 @@ typedef struct {
     uint32_t eax, ebx, ecx, edx;
 } cpuid_regs;
 
+// PIC-safe CPUID: preserve RBX (used as GOT base in PIE) via xchg
 static inline cpuid_regs cpuid(uint32_t leaf, uint32_t subleaf) {
     cpuid_regs r;
-    __asm__ __volatile__("cpuid" : "=a"(r.eax), "=b"(r.ebx), "=c"(r.ecx), "=d"(r.edx)
-                         : "a"(leaf), "c"(subleaf));
+    uint64_t rbxtmp;
+    __asm__ __volatile__(
+        "xchg %%rbx, %1\n\t"
+        "cpuid\n\t"
+        "xchg %%rbx, %1\n\t"
+        : "=a"(r.eax), "=&r"(rbxtmp), "=c"(r.ecx), "=d"(r.edx)
+        : "a"(leaf), "c"(subleaf)
+        : "cc");
+    r.ebx = (uint32_t)rbxtmp;
     return r;
 }
 

@@ -16,6 +16,7 @@ set(SRCS
   block/block.c
   block/ramdisk.c
   vfs/vfs.c
+  fs/devfs.c
   fs/exfat.c
   shell.c
   ../kernel/mm/pmm.c

@@ -5,6 +5,24 @@ BUILD_DIR="${ROOT_DIR}/build"
 
 "${ROOT_DIR}/scripts/make_iso.sh"
 
+# Options (override via env)
+# NO_REBOOT=1|0      -> add -no-reboot (default 1)
+# NO_SHUTDOWN=1|0    -> add -no-shutdown (default 0)
+# DEBUG_FLAGS=...    -> QEMU -d flags (default: int,guest_errors)
+# DEBUG_LOG=path     -> QEMU -D log file (default: build/qemu-<timestamp>.log)
+# SERIAL_LOG=path    -> Tee combined stdout/stderr to file (default: build/serial-<timestamp>.log)
+# EXTRA_QEMU_ARGS=.. -> Any extra args appended to QEMU
+
+NO_REBOOT=${NO_REBOOT:-1}
+NO_SHUTDOWN=${NO_SHUTDOWN:-0}
+DEBUG_FLAGS=${DEBUG_FLAGS:-"int,guest_errors"}
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+DEBUG_LOG=${DEBUG_LOG:-"${BUILD_DIR}/qemu-${TIMESTAMP}.log"}
+SERIAL_LOG=${SERIAL_LOG:-"${BUILD_DIR}/serial-${TIMESTAMP}.log"}
+EXTRA_QEMU_ARGS=${EXTRA_QEMU_ARGS:-}
+
+mkdir -p "${BUILD_DIR}"
+
 OVMF_CODE=${OVMF_CODE:-}
 OVMF_VARS=${OVMF_VARS:-}
 
@@ -51,13 +69,35 @@ if [[ "${KVM:-0}" == "1" ]]; then
   ACCEL_ARGS="-enable-kvm"
 fi
 
-qemu-system-x86_64 \
-  ${ACCEL_ARGS} \
-  -smp ${SMP:-4} \
-  -m 256M \
-  -drive if=pflash,format=raw,readonly=on,file="${OVMF_CODE}" \
-  -drive if=pflash,format=raw,file="${WRITABLE_VARS}" \
-  -cdrom "${ISO_PATH}" \
-  -boot d \
-  -serial stdio \
-  -no-reboot
+QEMU=(
+  qemu-system-x86_64
+  ${ACCEL_ARGS}
+  -smp ${SMP:-4}
+  -m 256M
+  -drive if=pflash,format=raw,readonly=on,file="${OVMF_CODE}"
+  -drive if=pflash,format=raw,file="${WRITABLE_VARS}"
+  -cdrom "${ISO_PATH}"
+  -boot d
+  -serial stdio
+  -d "${DEBUG_FLAGS}"
+  -D "${DEBUG_LOG}"
+)
+
+if [[ "${NO_REBOOT}" == "1" ]]; then
+  QEMU+=( -no-reboot )
+fi
+if [[ "${NO_SHUTDOWN}" == "1" ]]; then
+  QEMU+=( -no-shutdown )
+fi
+
+if [[ -n "${EXTRA_QEMU_ARGS}" ]]; then
+  # shellcheck disable=SC2206
+  EXTRA_ARR=( ${EXTRA_QEMU_ARGS} )
+  QEMU+=( "${EXTRA_ARR[@]}" )
+fi
+
+echo "QEMU debug log: ${DEBUG_LOG}"
+echo "Serial/stdout log: ${SERIAL_LOG}"
+
+"${QEMU[@]}" 2>&1 | tee "${SERIAL_LOG}"
+exit ${PIPESTATUS[0]}

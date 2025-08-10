@@ -19,3 +19,6 @@ block_device_t* block_find(const char* name) {
 }
 
 uint32_t block_default_sector(void) { return 512; }
+
+block_device_t* block_first(void){ return g_head; }
+block_device_t* block_next(block_device_t* dev){ return dev?dev->next:NULL; }

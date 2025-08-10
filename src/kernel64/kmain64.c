@@ -16,11 +16,32 @@
 // Devices and shell
 #include "dev/device.h"
 #include "vfs/vfs.h"
+#include "fs/exfat.h"
 void exfat_register(void);
+void devfs_register(void);
 int ramdisk_create(const char* name, uint64_t bytes);
 void display_console_register(void);
 void kb_ps2_register(void);
 void shell_main(void*);
+
+static void s_puts(const char* s){
+    while (*s) { serial_putc(*s++); }
+    serial_putc('\n');
+}
+
+static void s_put_hex64(uint64_t v){
+    static const char lut[16] = "0123456789ABCDEF";
+    serial_putc('0'); serial_putc('x');
+    for (int i=15;i>=0;--i){ uint8_t n=(v>>(i*4))&0xF; serial_putc(lut[n]); }
+}
+
+// Symbols from linker script to identify kernel image range in memory
+extern uint8_t __kernel_start;
+extern uint8_t __kernel_end;
+
+static inline uint64_t read_cr3_phys(void) {
+    uint64_t v; __asm__ volatile ("mov %%cr3,%0" : "=r"(v)); return v;
+}
 
 static void print_vendor(void) {
     cpuid_regs r0 = cpuid(0, 0);
@@ -44,7 +65,9 @@ static void print_brand(void) {
 
 static void print_features(void) {
     cpuid_regs r1 = cpuid(1, 0);
-    console_write("Features ECX=0x"); console_write_hex64(r1.ecx); console_write(" EDX=0x"); console_write_hex64(r1.edx); console_write("\n");
+    console_write("Features ECX="); console_write_hex64(r1.ecx); console_write(" EDX="); console_write_hex64(r1.edx); console_write("\n");
+    s_puts("[k64] cpuid(1,0) raw:");
+    s_put_hex64(((uint64_t)r1.edx<<32)|r1.ecx); serial_putc('\n');
 }
 
 static void print_memory_map(uint64_t mb2_addr) {
@@ -134,24 +157,87 @@ static void smp_worker(void* p) {
 }
 
 void kmain64(void* mb_info) {
+    // Early serial breadcrumb
+    serial_init();
+    s_puts("[k64] entry");
     console_init();
+    s_puts("[k64] console_init");
     uint64_t mb_addr = (uint64_t)mb_info;
 
+    // Sanity self-test to validate hex table and printing path
+    console_write("Selftest: ");
+    console_write_hex64(0x0123456789ABCDEFULL);
+    console_write("\n");
+    console_write("Digits: 0123456789ABCDEF\n");
+    s_puts("[k64] ser selftest hex:"); s_put_hex64(0x0123456789ABCDEFULL); serial_putc('\n');
+
     print_banner_and_info(mb_addr);
-    // Bring up memory subsystems
+    s_puts("[k64] printed banner");
+    // Capture loader paging structures currently in use so we can reserve
+    // them before building our own page tables. We assume identity mapping
+    // is active (set by the loader), so physical addresses are directly
+    // dereferenceable.
+    uint64_t loader_pml4 = read_cr3_phys();
+    uint64_t* pml4 = (uint64_t*)(uintptr_t)loader_pml4;
+    uint64_t loader_pdpt = (pml4[0] & ~0xFFFULL);
+    uint64_t* pdpt = (uint64_t*)(uintptr_t)loader_pdpt;
+    uint64_t loader_pd[4] = {
+        (pdpt[0] & ~0xFFFULL),
+        (pdpt[1] & ~0xFFFULL),
+        (pdpt[2] & ~0xFFFULL),
+        (pdpt[3] & ~0xFFFULL)
+    };
+
+    // Bring up physical memory manager and reserve critical ranges before any allocation
     pmm_init((void*)mb_addr, 0);
+    // Reserve the Multiboot2 info area itself so PMM won't reuse it
+    if (mb_addr) {
+        uint32_t mb_total = *(volatile uint32_t*)(uintptr_t)mb_addr;
+        if (mb_total > 0 && mb_total < (16U<<20)) { // sanity: <16MiB
+            pmm_reserve(mb_addr, (uint64_t)mb_total);
+        }
+    }
+    // Reserve the kernel image (text+data+bss+stack)
+    uint64_t kstart = (uint64_t)(uintptr_t)&__kernel_start;
+    uint64_t kend   = (uint64_t)(uintptr_t)&__kernel_end;
+    if (kend > kstart) {
+        pmm_reserve(kstart, kend - kstart);
+    }
+    // Reserve the loader's paging structures still in use until we switch CR3
+    pmm_reserve(loader_pml4, 4096);
+    pmm_reserve(loader_pdpt, 4096);
+    for (int i = 0; i < 4; ++i) if (loader_pd[i]) pmm_reserve(loader_pd[i], 4096);
+    s_puts("[k64] pmm_init");
     vmm_init_identity();
+    s_puts("[k64] vmm_init_identity");
     // Early heap: 256 KiB static region
     static uint8_t early_heap[256 * 1024] __attribute__((aligned(16)));
     kmalloc_init(early_heap, sizeof(early_heap));
+    s_puts("[k64] kmalloc_init");
     console_write("PMM/VMM initialized. Free: "); console_write_hex64(pmm_free_bytes()); console_write(" bytes\n\n");
     // Register basic devices
     display_console_register();
     kb_ps2_register();
     // Register filesystems
-    exfat_register();
+    exfat_register(); s_puts("[k64] exfat_register");
+    devfs_register(); s_puts("[k64] devfs_register");
+
+    // OPTION 1: Skip problematic auto-mount to get to working shell
+    // The VFS, filesystems, and devices are all registered and ready
+    // You can manually test them from the shell using commands like:
+    //   mount devfs dev     - mount device filesystem
+    //   mkram ram0 800000   - create 8MB RAM disk  
+    //   mkfs exfat ram0     - format as exFAT
+    //   mount exfat root ram0 - mount as root
+    s_puts("[k64] skipping auto-mount, going to shell");
+    console_write("Auto-mount disabled. Use shell commands to test VFS:\n");
+    console_write("  mount devfs dev\n");
+    console_write("  mkram ram0 800000\n");
+    console_write("  mkfs exfat ram0\n");
+    console_write("  mount exfat root ram0\n");
 
     // Start shell by default
+    s_puts("[k64] start shell");
     console_write("Starting shell...\n");
     sched_create(shell_main, NULL);
     sched_start();

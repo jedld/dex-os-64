@@ -1,5 +1,14 @@
 #include "vfs.h"
 #include "../console.h"
+#include "../serial.h"
+
+static void dbg_puts(const char* s){ while(*s) serial_putc(*s++); serial_putc('\n'); }
+static void dbg_put(const char* s){ while(*s) serial_putc(*s++); }
+static void dbg_put_hex(uint32_t v){
+    const char* hex = "0123456789ABCDEF";
+    serial_putc('0'); serial_putc('x');
+    for (int i=7;i>=0;--i){ uint8_t n=(v>>(i*4))&0xF; serial_putc(hex[n]); }
+}
 #include <stddef.h>
 
 #define MAX_FS 4
@@ -15,18 +24,35 @@ static int str_eq(const char* a, const char* b){while(*a&&*b&&*a==*b){++a;++b;}r
 static void str_cpy(char* d, const char* s, int n){int i=0; for(;i<n-1&&s[i];++i)d[i]=s[i]; d[i]=0;}
 
 int vfs_register_fs(const char* name, const vfs_fs_ops_t* ops){ if(g_fs_count>=MAX_FS) return -1; str_cpy(g_fs[g_fs_count].name,name,8); g_fs[g_fs_count].ops=ops; g_fs_count++; return 0; }
+// Debug: report registrations
+__attribute__((constructor)) static void vfs_dbg_init(void){ /* no-op to ensure file is linked */ }
 
 int vfs_mount(const char* fs_name, const char* mount_name, const char* bdev_name){
+    dbg_puts("[vfs] mount enter");
     if(g_mount_count>=MAX_MOUNTS) return -1;
     // find fs
-    const vfs_fs_ops_t* fops=NULL; for(int i=0;i<g_fs_count;++i){ if(str_eq(g_fs[i].name,fs_name)){ fops=g_fs[i].ops; break; }}
+    const vfs_fs_ops_t* fops=NULL; 
+    for(int i=0;i<g_fs_count;++i){ 
+        if(str_eq(g_fs[i].name,fs_name)){ 
+            fops=g_fs[i].ops; 
+            break; 
+        }
+    }
     if(!fops) return -1;
-    // find bdev
-    block_device_t* bdev = block_find(bdev_name);
-    if(!bdev) return -1;
-    void* priv=NULL; int rc=fops->mount(bdev,mount_name,&priv); if(rc!=0) return rc;
+    // find bdev (optional)
+    block_device_t* bdev = NULL;
+    if (bdev_name && bdev_name[0]) {
+        bdev = block_find(bdev_name);
+        if(!bdev) return -1;
+    }
+    void* priv=NULL; 
+    int rc=fops->mount(bdev,mount_name,&priv); 
+    dbg_puts("[vfs] mount fn returned");
+    if(rc!=0) return rc; 
+    dbg_puts("[vfs] mount fn returned");
+    if(rc!=0) return rc;
     str_cpy(g_mounts[g_mount_count].mname,mount_name,8); g_mounts[g_mount_count].ops=fops; g_mounts[g_mount_count].fs_priv=priv; g_mount_count++;
-    console_write("mounted "); console_write(fs_name); console_write(" on "); console_write(mount_name); console_write("\n");
+    dbg_puts("[vfs] mount exit");
     return 0;
 }
 
@@ -51,3 +77,12 @@ int vfs_stat(const char* path, uint64_t* size, int* is_dir){
 }
 
 void vfs_list_mounts(void){ console_write("Mounts:\n"); for(int i=0;i<g_mount_count;++i){ console_write("  "); console_write(g_mounts[i].mname); console_write("\n"); }}
+
+static int parse_mount_and_sub(const char* path, mount_t** out_mt, const char** out_sub){
+    const char* p = path; const char* sep = path; while(*sep && *sep!=':') ++sep; if(*sep!=':') return -1; char m[8]; int n= (sep-p<7? (int)(sep-p):7); for(int i=0;i<n;++i) m[i]=p[i]; m[n]=0; mount_t* mt=find_mount(m); if(!mt) return -1; const char* sub = (*sep==':'? sep+1:sep); *out_mt=mt; *out_sub=sub; return 0; }
+
+int vfs_write(vfs_node_t* n, uint64_t off, const void* buf, uint64_t len){ if(!n||!n->fops||!n->fops->write) return -1; return n->fops->write(n,off,buf,len); }
+
+int vfs_create(const char* path, uint64_t size_hint){ mount_t* mt; const char* sub; if(parse_mount_and_sub(path,&mt,&sub)!=0) return -1; if(!mt->ops->create) return -1; return mt->ops->create(mt->fs_priv, sub, size_hint); }
+
+int vfs_unlink(const char* path){ mount_t* mt; const char* sub; if(parse_mount_and_sub(path,&mt,&sub)!=0) return -1; if(!mt->ops->unlink) return -1; return mt->ops->unlink(mt->fs_priv, sub); }

@@ -21,6 +21,7 @@ static void cmd_help(void) {
     console_write("  used   - used memory bytes\n");
     console_write("  mkram <name> <bytes_hex> - create RAM disk\n");
     console_write("  mount <fs> <mnt> <dev>   - mount device\n");
+    console_write("  mount devfs /dev         - mount device filesystem\n");
     console_write("  mounts                   - list mounts\n");
     console_write("  ls [path]               - list directory\n");
     console_write("  cd <path>               - change directory\n");
@@ -29,6 +30,10 @@ static void cmd_help(void) {
     console_write("  mkfs exfat <dev> [lbl]  - same as mkexfat\n");
     console_write("  cat <path>             - print file contents\n");
     console_write("  stat <path>            - show file size/type\n");
+    console_write("  touch <path>           - create empty file\n");
+    console_write("  write <path> <text>    - write text to file (overwrite)\n");
+    console_write("  rm <path>              - remove file\n");
+    console_write("  fill <path> <size_hex> [ch] - write N bytes of ch (default 'A')\n");
         console_write("  demo                   - dots/dashes thread demo\n");
         console_write("  smp [N]                - spawn N worker threads\n");
         console_write("  memtest quick|range    - run memory tests\n");
@@ -48,7 +53,7 @@ static void shell_prompt(void) {
 }
 
 // Simple cwd state: mount and path within that mount
-static char s_cwd_mnt[8] = {0};
+static char s_cwd_mnt[8] = { 'r','o','o','t', 0 };
 static char s_cwd_path[128] = {0}; // without leading '/'
 
 static int is_ws(char c){ return c==' '||c=='\t'; }
@@ -160,8 +165,12 @@ static void shell_handle_line(char* buf, uint64_t n) {
         char* a=args; skip_ws(&a); int i=0; while(*a && !is_ws(*a) && i<7) fs[i++]=*a++;
         skip_ws(&a); i=0; while(*a && !is_ws(*a) && i<7) mnt[i++]=*a++;
         skip_ws(&a); i=0; while(*a && !is_ws(*a) && i<15) dev[i++]=*a++;
-        if (fs[0]==0||mnt[0]==0||dev[0]==0) { console_write("usage: mount <fs> <mnt> <dev>\n"); }
-        else { int rc=vfs_mount(fs,mnt,dev); if(rc!=0) console_write("mount failed\n"); }
+        if (fs[0]==0||mnt[0]==0) { console_write("usage: mount <fs> <mnt> <dev?>\n"); }
+        else {
+            const char* devarg = (dev[0]?dev:"");
+            int rc=vfs_mount(fs,mnt,devarg);
+            if(rc!=0) console_write("mount failed\n");
+        }
     } else if (strcmp(cmd, "mounts") == 0) {
         vfs_list_mounts();
         // If no cwd, set cwd to first mount for convenience (not required)
@@ -211,6 +220,59 @@ static void shell_handle_line(char* buf, uint64_t n) {
             uint64_t sz=0; int isdir=0; int rc = vfs_stat(full, &sz, &isdir);
             if (rc!=0) { console_write("stat: not found\n"); }
             else { console_write(isdir?"dir":"file"); console_write(" size=0x"); console_write_hex64(sz); console_putc('\n'); }
+        }
+    } else if (strcmp(cmd, "touch") == 0) {
+        if (!*args) { console_write("usage: touch <path>\n"); }
+        else { char full[192]; resolve_path(args, full, sizeof(full)); int rc=vfs_create(full,0); if(rc!=0) console_write("touch failed\n"); }
+    } else if (strcmp(cmd, "write") == 0) {
+        // write <path> <text>
+        char* a=args; if(!*a){ console_write("usage: write <path> <text>\n"); }
+        else {
+            // parse path token
+            char path[192]; int p=0; while(*a && !is_ws(*a) && p< (int)sizeof(path)-1){ path[p++]=*a++; } path[p]=0; skip_ws(&a);
+            if (!path[0]) { console_write("usage: write <path> <text>\n"); }
+            else {
+                char full[192]; resolve_path(path, full, sizeof(full));
+                vfs_node_t* n = vfs_open(full);
+                if (!n) { // try create then reopen
+                    if (vfs_create(full,0)!=0) { console_write("write: create failed\n"); }
+                    n = vfs_open(full);
+                }
+                if (!n) { console_write("write: open failed\n"); }
+                else {
+                    // Overwrite from offset 0
+                    int rc=vfs_write(n,0,a,(uint64_t)str_len(a)); if(rc<0) console_write("write failed\n"); else console_write("ok\n");
+                }
+            }
+        }
+    } else if (strcmp(cmd, "rm") == 0) {
+        if (!*args) { console_write("usage: rm <path>\n"); }
+        else { char full[192]; resolve_path(args, full, sizeof(full)); int rc=vfs_unlink(full); if(rc!=0) console_write("rm failed\n"); }
+    } else if (strcmp(cmd, "fill") == 0) {
+        // fill <path> <size_hex> [ch]
+        char* a=args; if(!*a){ console_write("usage: fill <path> <size_hex> [ch]\n"); }
+        else {
+            char path[192]; int p=0; while(*a && !is_ws(*a) && p<(int)sizeof(path)-1){ path[p++]=*a++; } path[p]=0; skip_ws(&a);
+            if(!path[0]) { console_write("usage: fill <path> <size_hex> [ch]\n"); }
+            else {
+                // parse hex size
+                uint64_t sz=0; while(*a){ char c=*a++; int v; if(c>='0'&&c<='9') v=c-'0'; else if(c>='a'&&c<='f') v=10+(c-'a'); else if(c>='A'&&c<='F') v=10+(c-'A'); else break; sz=(sz<<4)|((uint64_t)v); }
+                skip_ws(&a); char ch = (*a? *a : 'A');
+                if(sz==0){ console_write("fill: size must be > 0\n"); }
+                else {
+                    char full[192]; resolve_path(path, full, sizeof(full));
+                    vfs_node_t* n = vfs_open(full);
+                    if(!n){ if(vfs_create(full,0)!=0){ console_write("fill: create failed\n"); }
+                        n = vfs_open(full);
+                    }
+                    if(!n){ console_write("fill: open failed\n"); }
+                    else {
+                        uint8_t buf[512]; for(int i=0;i<512;++i) buf[i]=(uint8_t)ch;
+                        uint64_t off=0; while(off<sz){ uint64_t towr = sz - off; if(towr>512) towr=512; int rc=vfs_write(n, off, buf, towr); if(rc<0){ console_write("fill: write error\n"); break; } off += (uint64_t)rc; }
+                        if(off==sz) console_write("ok\n");
+                    }
+                }
+            }
         }
     } else if (strcmp(cmd, "mkexfat") == 0) {
         // mkexfat <dev> [label]

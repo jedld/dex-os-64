@@ -238,3 +238,29 @@ void pmm_free_frames(uint64_t paddr, size_t count) {
         }
     }
 }
+
+uint64_t pmm_alloc_frames_below(size_t count, uint64_t max_phys_exclusive) {
+    if (count == 0) return 0;
+    uint64_t need = (uint64_t)count * PMM_FRAME_SIZE;
+    if (g_free < need) return 0;
+    uint64_t frames = (g_bitmap_limit - g_bitmap_base) / PMM_FRAME_SIZE;
+    uint64_t limit_idx = (max_phys_exclusive > g_bitmap_base)
+        ? ((max_phys_exclusive - g_bitmap_base) / PMM_FRAME_SIZE)
+        : 0;
+    if (limit_idx > frames) limit_idx = frames;
+    uint64_t run = 0, run_start = 0;
+    for (uint64_t i = 0; i < limit_idx; ++i) {
+        if (!test_frame(i)) {
+            if (run == 0) run_start = i;
+            run++;
+            if (run >= count) {
+                for (uint64_t j = 0; j < count; ++j) set_frame(run_start + j);
+                g_free -= need;
+                return g_bitmap_base + run_start * PMM_FRAME_SIZE;
+            }
+        } else {
+            run = 0;
+        }
+    }
+    return 0;
+}

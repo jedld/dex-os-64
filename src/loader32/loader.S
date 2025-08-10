@@ -310,8 +310,12 @@ serial_init32:
     mov $0x3F8+3, %dx
     mov $0x80, %al
     out %al, %dx
-    mov $0x3F8, %dx
-    mov $0x03, %al
+    # Set baud divisor to 1 (115200 bps)
+    mov $0x3F8, %dx        # DLL
+    mov $0x01, %al         # divisor low = 1
+    out %al, %dx
+    mov $0x3F8+1, %dx      # DLM
+    mov $0x00, %al         # divisor high = 0
     out %al, %dx
     mov $0x3F8+3, %dx
     mov $0x03, %al
@@ -358,8 +362,12 @@ serial_init64:
     mov $0x3F8+3, %dx
     mov $0x80, %al
     out %al, %dx
-    mov $0x3F8, %dx
-    mov $0x03, %al
+    # Set baud divisor to 1 (115200 bps)
+    mov $0x3F8, %dx        # DLL
+    mov $0x01, %al         # divisor low = 1
+    out %al, %dx
+    mov $0x3F8+1, %dx      # DLM
+    mov $0x00, %al         # divisor high = 0
     out %al, %dx
     mov $0x3F8+3, %dx
     mov $0x03, %al

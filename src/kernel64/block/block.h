@@ -20,3 +20,7 @@ struct block_device {
 void block_register(block_device_t* dev);
 block_device_t* block_find(const char* name);
 uint32_t block_default_sector(void);
+
+// Iteration helpers
+block_device_t* block_first(void);
+block_device_t* block_next(block_device_t* dev);

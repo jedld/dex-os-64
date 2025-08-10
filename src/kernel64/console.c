@@ -1,5 +1,14 @@
 #include "console.h"
 #include "io.h"
+#include <stdint.h>
+
+// Minimal COM1 helpers for mirroring console output to serial
+#define COM1_BASE 0x3F8
+#define COM_LSR   (COM1_BASE + 5)
+#define COM_LSR_THRE 0x20
+static inline void ser_wait_tx(void) { while ((inb(COM_LSR) & COM_LSR_THRE) == 0) {}
+}
+static inline void ser_putc(char c) { ser_wait_tx(); outb(COM1_BASE, (uint8_t)c); }
 #include <stddef.h>
 
 #define VGA_MEM ((volatile uint16_t*)0xB8000)
@@ -61,20 +70,22 @@ void console_putc(char c) {
     move_cursor();
 }
 
-void console_write(const char* s) { while (*s) console_putc(*s++); }
+void console_write(const char* s) { while (*s) { char ch=*s++; console_putc(ch); ser_putc(ch); } }
 
-static const char* hex = "0123456789ABCDEF";
 void console_write_hex64(uint64_t v) {
+    static const char lut[16] = "0123456789ABCDEF";
     console_write("0x");
     for (int i = 15; i >= 0; --i) {
         uint8_t nyb = (v >> (i*4)) & 0xF;
-        console_putc(hex[nyb]);
+        char ch = lut[nyb];
+        console_putc(ch);
+        ser_putc(ch);
     }
 }
 
 void console_write_dec(uint64_t v) {
     char buf[32]; size_t i = 0;
-    if (v == 0) { console_putc('0'); return; }
+    if (v == 0) { console_putc('0'); ser_putc('0'); return; }
     while (v > 0 && i < sizeof(buf)) { buf[i++] = '0' + (v % 10); v /= 10; }
-    while (i--) console_putc(buf[i]);
+    while (i--) { char ch = buf[i]; console_putc(ch); ser_putc(ch); }
 }

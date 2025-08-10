@@ -65,15 +65,15 @@ void vmm_load_cr3(uint64_t pml4_phys) {
 }
 
 void vmm_init_identity(void) {
-    // Build a minimal PML4 and identity map the low 1 GiB with 4KiB pages for flexibility
+    // Build a minimal PML4 and identity map the low 4 GiB with 4KiB pages
     uint64_t pml4 = pmm_alloc_frames(1);
     if (!pml4) return;
     // zero
     for (int i = 0; i < 512; ++i) ((uint64_t*)(uintptr_t)pml4)[i] = 0;
 
-    // Identity map first, say, 1GiB (0..0x3FFFFFFF)
+    // Identity map 0 .. 4GiB-1
     uint64_t flags = VMM_PRESENT | VMM_RW;
-    for (uint64_t a = 0; a < (1ULL<<30); a += PAGE_SIZE) {
+    for (uint64_t a = 0; a < (1ULL<<32); a += PAGE_SIZE) {
         uint64_t* pte = get_pte(pml4, a, 1);
         if (!pte) break;
         *pte = (a & ~0xFFFULL) | flags;
