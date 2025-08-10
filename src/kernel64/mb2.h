@@ -8,9 +8,12 @@
 #define MB2_TAG_MODULE         3
 #define MB2_TAG_MMAP           6
 #define MB2_TAG_BASIC_MEMINFO  4
-#define MB2_TAG_EFI32          7
-#define MB2_TAG_EFI64          8
-#define MB2_TAG_EFI_MMAP       12
+#define MB2_TAG_EFI32          11   // EFI 32-bit system table pointer (per spec)
+#define MB2_TAG_EFI64          12   // EFI 64-bit system table pointer (per spec)
+#define MB2_TAG_EFI_MMAP       17   // EFI memory map (per spec)
+// Additional commonly used tags
+#define MB2_TAG_FRAMEBUFFER     8   // Framebuffer info (RGB/EGA text)
+#define MB2_TAG_VBE             7   // VBE info
 
 #pragma pack(push,1)
 typedef struct { uint32_t type, size; } mb2_tag;
@@ -25,7 +28,7 @@ typedef struct {
 } mb2_mmap_entry;
 #pragma pack(pop)
 
-// EFI memory map tag layout (type=12) per Multiboot2 spec
+// EFI memory map tag layout (type=17) per Multiboot2 spec
 #pragma pack(push,1)
 typedef struct {
     mb2_tag tag;           // type=12, size = total size of this tag
@@ -43,6 +46,35 @@ typedef struct {
     uint64_t NumberOfPages; // 4KiB pages
     uint64_t Attribute;
 } efi_mem_desc;
+#pragma pack(pop)
+
+// Framebuffer info (type=8)
+#pragma pack(push,1)
+typedef struct {
+    uint32_t type;              // = 8
+    uint32_t size;
+    uint64_t framebuffer_addr;  // physical
+    uint32_t framebuffer_pitch; // bytes per line (pixels for RGB, chars*2 for EGA text)
+    uint32_t framebuffer_width; // pixels for RGB, chars for EGA text
+    uint32_t framebuffer_height;// pixels for RGB, chars for EGA text
+    uint8_t  framebuffer_bpp;   // bits per pixel (16 for EGA text)
+    uint8_t  framebuffer_type;  // 0=indexed,1=RGB,2=EGA text
+    uint16_t reserved;
+    // Followed by either palette (indexed) or RGB mask info (type=1)
+} mb2_tag_framebuffer_common;
+
+typedef struct {
+    mb2_tag_framebuffer_common common;
+    // For RGB type=1
+    struct {
+        uint8_t red_field_position;
+        uint8_t red_mask_size;
+        uint8_t green_field_position;
+        uint8_t green_mask_size;
+        uint8_t blue_field_position;
+        uint8_t blue_mask_size;
+    } rgb_info;
+} mb2_tag_framebuffer;
 #pragma pack(pop)
 
 // Basic memory info (type=4)

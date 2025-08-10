@@ -1,17 +1,25 @@
 # dex-os-64 — x86_64 Operating System with Long Mode Support
 
-A minimal 64-bit operating system that boots via GRUB Multiboot2, enters x86_64 long mode, and provides basic system information display with interactive keyboard support.
+An educational 64-bit operating system that boots via GRUB Multiboot2, enters x86_64 long mode, and provides a small kernel with text consoles, serial mirroring, a simple memory manager, and an interactive shell.
 
 ## Features
 
-- **Multiboot2 Loader**: 32-bit loader that sets up long mode and jumps to 64-bit kernel
-- **x86_64 Long Mode**: Full 64-bit kernel execution with proper calling conventions
-- **VGA Text Console**: 80x25 color text output to VGA memory (0xB8000)
-- **CPU Information Display**: Shows CPU vendor, brand string, and feature flags via CPUID
-- **Memory Map**: Parses and displays Multiboot2 memory map with usable/reserved regions
-- **Interactive Keyboard Support**: Waits for keypress (PS/2 keyboard or serial console)
-- **Serial Console Support**: Dual input support for both PS/2 and serial console interaction
-- **UEFI Boot Support**: Boots on UEFI systems via GRUB
+- Multiboot2 loader (32-bit) that enables long mode and jumps to the 64-bit kernel module
+- x86_64 long mode kernel with proper SysV ABI calling conventions
+- Text consoles:
+   - VGA text 80x25 backend (0xB8000)
+   - Multiboot2 EGA text framebuffer detection and binding (respects pitch/cols/rows)
+   - Multiple console instances with offscreen buffer, scrolling, active-console switching
+   - Serial mirroring of console output (COM1 @ 115200)
+- CPU info via CPUID (vendor, brand, feature flags) with PIC-safe CPUID
+- Memory info:
+   - Parses EFI memory map or legacy Multiboot2 mmap; falls back to basic meminfo
+   - Simple PMM (bitmap) and VMM identity mapping; early heap (kmalloc)
+- Devices and shell:
+   - PS/2 keyboard input
+   - Display console device wrapper
+   - Minimal VFS with devfs, RAM disk, and exFAT stubs; interactive shell with basic commands
+- UEFI/BIOS hybrid ISO and QEMU run scripts with serial logging
 
 ## Architecture
 
@@ -23,11 +31,11 @@ The system consists of two main components:
    - Enables long mode and jumps to 64-bit kernel
 
 2. **64-bit Kernel** (`src/kernel64/`):
-   - Entry point with proper stack alignment
-   - VGA console initialization and text output
-   - CPU information extraction via CPUID
-   - Memory map parsing from Multiboot2 info
-   - Keyboard input handling (PS/2 + serial)
+   - Entry with proper stack and CPUID helpers
+   - Console subsystem with multi-console text backends and serial mirroring
+   - Memory map parsing from Multiboot2 (EFI mmap, legacy mmap, or basic meminfo)
+   - PMM/VMM/early heap initialization and reservation of critical regions
+   - Keyboard input (PS/2) and simple scheduler/shell
 
 ## Build Requirements
 
@@ -54,7 +62,7 @@ Run in QEMU:
 ./scripts/run_qemu.sh
 ```
 
-The system will display:
+The kernel will display:
 - CPU vendor and brand information
 - CPU feature flags (ECX/EDX from CPUID)
 - Complete memory map with usable and reserved regions
@@ -67,8 +75,8 @@ When booted, the kernel displays system information:
 ```
 dex-os-64 (x86_64)
 
-CPU vendor: GenuineIntel
-CPU brand:  Intel(R) Core(TM) i7-8700K CPU @ 3.70GHz
+CPU vendor: AuthenticAMD
+CPU brand:  QEMU Virtual CPU version 2.5+
 Features ECX=0x... EDX=0x...
 
 Memory map:
@@ -79,8 +87,9 @@ Memory map:
 Total RAM: 0x... bytes
 Reserved:  0x... bytes
 
-Done.
-Press any key to continue...
+PMM/VMM initialized. Free: 0x... bytes
+
+Entering shell. Type 'help'.
 ```
 
 The system waits for input from either:
@@ -97,7 +106,7 @@ src/
 ├── kernel64/          # 64-bit kernel
 │   ├── kmain64.c      # Main kernel with CPU info and memory map
 │   ├── start64.S      # 64-bit entry point
-│   ├── console.c/h    # VGA text console
+│   ├── console.c/h    # Multi-console text backend (VGA or EGA text framebuffer)
 │   ├── cpuid.h        # CPU identification
 │   ├── io.h           # Port I/O operations
 │   ├── mb2.h          # Multiboot2 structures
@@ -122,25 +131,42 @@ src/
 - **Loader**: 32-bit code, identity-mapped first 1GB
 - **Kernel**: 64-bit flat binary loaded as module
 - **Stack**: 64-bit stack with proper SysV ABI alignment
-- **VGA**: Text mode buffer at 0xB8000
+- **Text console**: VGA text at 0xB8000, or EGA text framebuffer from MB2 tag (type=8)
 
 ### Key Features Implemented
 - Multiboot2 specification compliance
 - Long mode transition with proper GDT setup
 - Identity paging (2MB pages for first 1GB)
 - SysV ABI calling conventions
-- VGA text console with cursor management
+- Text consoles with cursor management, scrolling, and multi-instance support
 - PS/2 keyboard polling
 - Serial I/O for debugging and input
-- Robust memory map parsing
+- Memory map parsing (EFI mmap preferred), PMM/VMM, and early heap
 - CPU feature detection via CPUID
+
+## Testing
+
+Basic smoke test (build, run, assert key boot markers from the serial log):
+
+```bash
+chmod +x tests/smoke.sh
+./tests/smoke.sh
+```
+
+This script builds the ISO, runs QEMU, then checks the latest `build/serial-*.log` for:
+- Selftest hex print
+- CPU vendor/brand and feature flags
+- Memory map header and PMM/VMM free line
+- Shell prompt marker
+
+Planned: add a lightweight unit/integration test harness that can run inside QEMU (headless) to validate subsystems (PMM/VMM, CPUID, console) automatically and fail on regressions.
 
 ## Development Notes
 
 This kernel demonstrates several important OS development concepts:
 - **Mode Transitions**: 32-bit to 64-bit long mode
 - **Memory Management**: Basic paging and memory map interpretation  
-- **I/O Operations**: Both memory-mapped (VGA) and port-based (keyboard/serial)
+- **I/O Operations**: Port I/O, VGA text or EGA text framebuffer, and serial
 - **Hardware Abstraction**: CPU identification and feature detection
 - **User Interaction**: Simple input handling for demonstration
 

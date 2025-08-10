@@ -160,7 +160,7 @@ void kmain64(void* mb_info) {
     // Early serial breadcrumb
     serial_init();
     s_puts("[k64] entry");
-    console_init();
+    console_init_from_mb2((uint64_t)mb_info);
     s_puts("[k64] console_init");
     uint64_t mb_addr = (uint64_t)mb_info;
 

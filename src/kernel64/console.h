@@ -1,7 +1,29 @@
 #pragma once
 #include <stdint.h>
 
+// Opaque console type supporting multiple instances (VGA text backend for now)
+typedef struct Console Console;
+
+// Initialize console subsystem and create a default active console.
+// Prefer Multiboot2 framebuffer if provided (EGA text or RGB handled progressively).
 void console_init(void);
+void console_init_from_mb2(uint64_t mb2_addr);
+
+// Create an additional VGA text console instance (cols x rows). Returns NULL on failure.
+Console* console_create_vga_text(uint16_t cols, uint16_t rows);
+
+// Switch active console used by the wrapper APIs below and bind to VGA output.
+void console_set_active(Console* c);
+// Get the current active console.
+Console* console_get_active(void);
+
+// Per-console operations
+void console_clear_ex(Console* c);
+void console_putc_ex(Console* c, char ch);
+void console_write_ex(Console* c, const char* s);
+void console_set_color_ex(Console* c, uint8_t fg, uint8_t bg);
+
+// Convenience wrappers that operate on the active console
 void console_clear(void);
 void console_putc(char c);
 void console_write(const char* s);
@@ -9,7 +31,7 @@ void console_write_hex64(uint64_t v);
 void console_write_dec(uint64_t v);
 void console_set_color(uint8_t fg, uint8_t bg);
 
-// Console geometry (keep in sync with console.c)
+// Console geometry hint (defaults for initial console)
 #ifndef CONSOLE_COLS
 #define CONSOLE_COLS 80
 #endif
