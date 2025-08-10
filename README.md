@@ -18,7 +18,7 @@ An educational 64-bit operating system that boots via GRUB Multiboot2, enters x8
 - Devices and shell:
    - PS/2 keyboard input
    - Display console device wrapper
-   - Minimal VFS with devfs, RAM disk, and exFAT stubs; interactive shell with basic commands
+   - Minimal VFS with devfs, RAM disk, and exFAT stubs; automatic root fs setup (devfs + ram0 exFAT) and interactive shell
 - UEFI/BIOS hybrid ISO and QEMU run scripts with serial logging
 
 ## Architecture
@@ -158,6 +158,11 @@ This script builds the ISO, runs QEMU, then checks the latest `build/serial-*.lo
 - CPU vendor/brand and feature flags
 - Memory map header and PMM/VMM free line
 - Shell prompt marker
+
+Note: The kernel now auto-mounts a RAM-backed root filesystem at boot:
+- Mounts devfs as 'dev'
+- Creates an 8MiB RAM disk 'ram0', formats it as exFAT, and mounts it as 'root'
+- Use paths like `root:/` or `dev:/` in VFS-aware commands
 
 Planned: add a lightweight unit/integration test harness that can run inside QEMU (headless) to validate subsystems (PMM/VMM, CPUID, console) automatically and fail on regressions.
 

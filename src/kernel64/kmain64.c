@@ -222,19 +222,26 @@ void kmain64(void* mb_info) {
     exfat_register(); s_puts("[k64] exfat_register");
     devfs_register(); s_puts("[k64] devfs_register");
 
-    // OPTION 1: Skip problematic auto-mount to get to working shell
-    // The VFS, filesystems, and devices are all registered and ready
-    // You can manually test them from the shell using commands like:
-    //   mount devfs dev     - mount device filesystem
-    //   mkram ram0 800000   - create 8MB RAM disk  
-    //   mkfs exfat ram0     - format as exFAT
-    //   mount exfat root ram0 - mount as root
-    s_puts("[k64] skipping auto-mount, going to shell");
-    console_write("Auto-mount disabled. Use shell commands to test VFS:\n");
-    console_write("  mount devfs dev\n");
-    console_write("  mkram ram0 800000\n");
-    console_write("  mkfs exfat ram0\n");
-    console_write("  mount exfat root ram0\n");
+    // Auto-mount devfs and a RAM-backed root filesystem (exFAT on ram0)
+    console_write("Setting up root filesystem...\n");
+    int rc;
+    // 1) devfs at mount name 'dev'
+    rc = vfs_mount("devfs", "dev", "");
+    if (rc==0) { s_puts("[k64] mounted devfs as 'dev'"); } else { s_puts("[k64] devfs mount FAILED"); }
+    // 2) Create an 8 MiB RAM disk named 'ram0'
+    uint64_t ram_bytes = 8ULL * 1024 * 1024;
+    if (ramdisk_create("ram0", ram_bytes)==0) { s_puts("[k64] ramdisk ram0 created"); }
+    else { s_puts("[k64] ramdisk ram0 creation FAILED"); }
+    // 3) Format as exFAT
+    if (exfat_format_device("ram0", "" )==0) { s_puts("[k64] exfat mkfs OK on ram0"); }
+    else { s_puts("[k64] exfat mkfs FAILED on ram0"); }
+    // 4) Mount exfat as 'root'
+    rc = vfs_mount("exfat", "root", "ram0");
+    if (rc==0) { s_puts("[k64] mounted exfat 'root' on ram0"); }
+    else { s_puts("[k64] mount exfat root FAILED"); }
+    console_write("Mounts after setup:\n");
+    vfs_list_mounts();
+    console_write("\n");
 
     // Start shell by default
     s_puts("[k64] start shell");
