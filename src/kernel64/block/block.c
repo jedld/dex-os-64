@@ -54,13 +54,13 @@ void block_scan_partitions(void){
     uint8_t mbr[512];
     slog("[block] scan_partitions enter");
     for (block_device_t* d = g_head; d; d = d->next) {
-    console_write("[block] probe dev ");
-    console_write(d->name);
+    console_write("[block] probe dev "); console_write(d->name);
     console_write(" sec="); console_write_hex64((uint64_t)d->sector_size);
     console_write(" count="); console_write_hex64((uint64_t)d->sector_count);
     console_write("\n");
     // Proceed to scan all devices (including RAM disks)
     if (!d->ops || !d->ops->read || d->sector_size != 512) continue;
+#ifdef BLOCK_DEBUG
     // Log the function pointer addresses to ensure we're calling what we expect
     console_write("[block] ops@="); console_write_hex64((uint64_t)(uintptr_t)d->ops);
     console_write(" read@="); console_write_hex64((uint64_t)(uintptr_t)d->ops->read);
@@ -73,25 +73,16 @@ void block_scan_partitions(void){
     console_write("[block] ops[0..3] = ");
     for (int oi=0; oi<4; ++oi) { console_write_hex64(op64[oi]); console_write(" "); }
     console_write("\n");
-    // (can't reference static symbols from other TUs safely here)
+#endif
     console_write("[block] reading MBR\n");
-    // Test-call the read op with count=0 to validate the function pointer call path
-    console_write("[block] test read count=0 -> enter\n");
-    serial_putc('T');
+#ifdef BLOCK_DEBUG
+    // Test-call the read op with count=0 and then 1
     (void)d->ops->read(d, 0, mbr, 0);
-    serial_putc('t');
-    console_write("[block] test read count=0 -> exit\n");
-    // Tiny test read with count=1 into a scratch buffer to verify entry/exit
     uint8_t scratch[512];
-    console_write("[block] test read count=1 -> enter\n");
-    serial_putc('P');
     (void)d->ops->read(d, 0, scratch, 1);
-    serial_putc('p');
-    console_write("[block] test read count=1 -> exit\n");
+#endif
     // Now perform the actual read of LBA0
-    serial_putc('B');
     if (d->ops->read(d, 0, mbr, 1) != 1) { console_write("[block] read LBA0 fail\n"); continue; }
-    serial_putc('b');
         console_write("[block] LBA0 ok\n");
         if (mbr[510] != 0x55 || mbr[511] != 0xAA) { console_write("[block] no 0x55AA\n"); continue; }
         console_write("[block] 0x55AA found\n");
